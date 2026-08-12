@@ -1,0 +1,100 @@
+:root {
+  color-scheme: dark;
+  font-family: Arial, Helvetica, sans-serif;
+  background: #08111f;
+  color: #f5f7fb;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 20% 15%, #173e66 0, transparent 31rem),
+    radial-gradient(circle at 80% 80%, #24344e 0, transparent 29rem),
+    #08111f;
+}
+
+main {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 2rem;
+}
+
+.hero {
+  width: min(100%, 44rem);
+  padding: clamp(2rem, 7vw, 5rem);
+  border: 1px solid #38516f;
+  border-radius: 1.5rem;
+  background: rgb(8 17 31 / 78%);
+  box-shadow: 0 2rem 5rem rgb(0 0 0 / 28%);
+}
+
+.eyebrow {
+  margin: 0 0 1rem;
+  color: #7dd3fc;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(2.8rem, 10vw, 5.5rem);
+  letter-spacing: -0.075em;
+}
+
+.intro {
+  max-width: 37rem;
+  margin: 1.5rem 0 2.5rem;
+  color: #c7d3e1;
+  font-size: 1.1rem;
+  line-height: 1.65;
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 1rem 1.25rem;
+  border: 1px solid #344a65;
+  border-radius: 0.9rem;
+  background: #101d2d;
+}
+
+.status p,
+.status strong {
+  display: block;
+  margin: 0;
+}
+
+.status p {
+  color: #9fb1c7;
+  font-size: 0.85rem;
+}
+
+.status strong {
+  margin-top: 0.18rem;
+}
+
+.status-dot {
+  width: 0.75rem;
+  height: 0.75rem;
+  flex: 0 0 auto;
+  border-radius: 999px;
+}
+
+.status--ready .status-dot {
+  background: #34d399;
+  box-shadow: 0 0 0.8rem #34d399;
+}
+
+.status--waiting .status-dot {
+  background: #fbbf24;
+  box-shadow: 0 0 0.8rem #fbbf24;
+}

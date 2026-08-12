@@ -1,0 +1,17 @@
+{
+  "name": "auth-lab",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.17.0",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=11.0.0"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @auth-lab/web --filter @auth-lab/api run dev",
+    "build": "pnpm --filter @auth-lab/web run build && pnpm --filter @auth-lab/api run build",
+    "typecheck": "pnpm --filter @auth-lab/web run typecheck && pnpm --filter @auth-lab/api run typecheck && pnpm --filter @auth-lab/database run typecheck",
+    "test": "pnpm --filter @auth-lab/api run test",
+    "db:validate": "pnpm --filter @auth-lab/database run validate"
+  }
+}
