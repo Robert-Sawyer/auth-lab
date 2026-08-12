@@ -9,9 +9,12 @@
   },
   "scripts": {
     "dev": "pnpm --parallel --filter @auth-lab/web --filter @auth-lab/api run dev",
-    "build": "pnpm --filter @auth-lab/web run build && pnpm --filter @auth-lab/api run build",
+    "build": "pnpm --filter @auth-lab/database run build && pnpm --filter @auth-lab/web run build && pnpm --filter @auth-lab/api run build",
     "typecheck": "pnpm --filter @auth-lab/web run typecheck && pnpm --filter @auth-lab/api run typecheck && pnpm --filter @auth-lab/database run typecheck",
-    "test": "pnpm --filter @auth-lab/api run test",
+    "test": "pnpm --filter @auth-lab/api run test && pnpm --filter @auth-lab/database run test",
+    "ci:verify": "pnpm db:validate && pnpm typecheck && pnpm test && pnpm build",
+    "db:generate": "pnpm --filter @auth-lab/database run generate",
+    "db:migrate:deploy": "pnpm --filter @auth-lab/database run migrate:deploy",
     "db:validate": "pnpm --filter @auth-lab/database run validate"
   }
 }
