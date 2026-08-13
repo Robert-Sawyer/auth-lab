@@ -18,6 +18,10 @@ export type CreateAccountInput = {
   userId: string;
 };
 
+export type CreateAccountForNewUserInput = Omit<CreateAccountInput, "userId"> & {
+  user: CreateUserInput;
+};
+
 export type CreateSessionInput = {
   accountId: string;
   expiresAt: Date;

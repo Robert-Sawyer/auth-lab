@@ -1,6 +1,10 @@
 import type { OAuthProvider } from "../generated/prisma/client.js";
 
-import type { AuthDatabase, CreateAccountInput } from "./types.js";
+import type {
+  AuthDatabase,
+  CreateAccountForNewUserInput,
+  CreateAccountInput
+} from "./types.js";
 
 export class AccountsRepository {
   public constructor(private readonly database: AuthDatabase) {}
@@ -20,5 +24,15 @@ export class AccountsRepository {
 
   public create(input: CreateAccountInput) {
     return this.database.account.create({ data: input });
+  }
+
+  public createForNewUser({ user, ...account }: CreateAccountForNewUserInput) {
+    return this.database.account.create({
+      data: {
+        ...account,
+        user: { create: user }
+      },
+      include: { user: true }
+    });
   }
 }

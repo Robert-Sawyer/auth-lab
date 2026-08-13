@@ -11,9 +11,12 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@auth-lab/database": "workspace:*",
+    "@fastify/cookie": "11.1.2",
     "@fastify/cors": "11.3.0",
     "dotenv": "17.4.2",
-    "fastify": "5.11.3"
+    "fastify": "5.11.3",
+    "jose": "6.2.8"
   },
   "devDependencies": {
     "@types/node": "26.2.0",
