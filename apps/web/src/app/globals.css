@@ -57,10 +57,40 @@ h1 {
   line-height: 1.65;
 }
 
+.google-button {
+  display: inline-flex;
+  min-height: 3rem;
+  align-items: center;
+  justify-content: center;
+  padding: 0.8rem 1.15rem;
+  border: 1px solid #6b819b;
+  border-radius: 0.75rem;
+  background: #f8fafc;
+  color: #0f172a;
+  font-weight: 700;
+  text-decoration: none;
+  transition: transform 150ms ease, background 150ms ease;
+}
+
+.google-button:hover {
+  background: #e0f2fe;
+  transform: translateY(-1px);
+}
+
+.oauth-notice {
+  margin: 1.2rem 0 0;
+  padding: 0.85rem 1rem;
+  border-left: 3px solid #7dd3fc;
+  color: #dce7f3;
+  background: #102840;
+  line-height: 1.5;
+}
+
 .status {
   display: flex;
   align-items: center;
   gap: 0.9rem;
+  margin-top: 2rem;
   padding: 1rem 1.25rem;
   border: 1px solid #344a65;
   border-radius: 0.9rem;

@@ -73,6 +73,17 @@ Open [http://localhost:3000](http://localhost:3000). The API health check is ava
 
 If port `5432` is already used by another local PostgreSQL installation, set a different `POSTGRES_PORT` in `.env` and change the port in `DATABASE_URL` to the same value before starting Docker Compose.
 
+## Google OAuth setup
+
+1. Create an OAuth 2.0 **Web application** client in Google Cloud Console.
+2. Add the exact value of `GOOGLE_REDIRECT_URI` to the client's authorized redirect URIs. The local default is `http://localhost:3001/auth/google/callback`.
+3. Add your Google account as a test user while the consent screen is in testing mode.
+4. Replace the placeholder values for `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `OAUTH_TRANSACTION_COOKIE_SECRET` in `.env`.
+
+In development, a missing cookie secret is replaced with an in-memory random value so that the API remains usable before this setup is complete. Set a persistent secret before real testing; production refuses to start without one.
+
+Google requires an exact redirect URI match, and permits `localhost` HTTP callbacks for local development. Production callbacks must use HTTPS. See the [Google web-server OAuth guide](https://developers.google.com/identity/protocols/oauth2/web-server) and its [redirect URI rules](https://developers.google.com/identity/protocols/oauth2/web-server#redirect-uri_validation-rules).
+
 ## Commands
 
 | Command | Purpose |
@@ -131,11 +142,22 @@ Each refresh token belongs to one session and is stored as a hash, never as its 
 
 All identity and token records use UUID primary keys rather than sequential integers. They are safe to expose in URLs and JWT claims without revealing record counts. Unique constraints, foreign keys, cascade behavior, and indexes implement important invariants in PostgreSQL instead of relying only on application code.
 
-### Planned token and OAuth design
+### Google OIDC Authorization Code Flow with PKCE
 
-The following items are planned for the next implementation stages and are not enabled yet:
+Google sign-in is implemented as a backend-owned Authorization Code Flow. The API creates a fresh high-entropy `state`, PKCE `code_verifier`, and OIDC `nonce` for every attempt. It stores them in a signed, `httpOnly`, `SameSite=Lax` cookie restricted to `/auth/google`; the callback clears it regardless of outcome. The incoming `state` is compared in constant time and transactions expire after ten minutes.
 
-- OAuth Authorization Code Flow with PKCE and a high-entropy `state` value for CSRF protection.
+The API sends the original verifier only to Google's token endpoint. It then verifies the returned `id_token` signature using Google's JWKS and validates issuer, audience, expiry, nonce, subject, and verified email before any database write. This is stronger than decoding the JWT or trusting profile fields sent by the browser. Google documents `state` as an opaque round-trip value and `nonce` as replay protection in its [OIDC reference](https://developers.google.com/identity/openid-connect/reference); `jose` caches and selects trusted JWKS keys for signature verification.
+
+At this stage, the callback creates or finds a `User` and `Account`, then redirects to the UI with a non-sensitive status only. It intentionally does **not** create an application session yet. The next stage will add access and refresh tokens.
+
+### Account creation and future account linking
+
+On first Google sign-in, the application creates the `User` and `Account` in one nested Prisma write. If the Google `sub` already has an account, it finds that account's user. If a different local identity already owns the same email, the flow refuses to link it automatically. Email equality alone is not proof that the same person controls both accounts; explicit linking while authenticated will be added with GitHub support.
+
+### Planned token and provider stages
+
+The following items are planned for subsequent implementation stages:
+
 - Google OIDC and GitHub OAuth adapters. Google will use its OIDC `id_token`; GitHub will use its OAuth access token to fetch the profile because it does not provide the same OIDC identity token flow.
 - Short-lived JWT access tokens for API authorization, paired with long-lived, rotating refresh tokens in `httpOnly`, `Secure`, and appropriately scoped `SameSite` cookies.
 - Server-side session and refresh-token revocation, which makes "log out this device" and "log out all devices" effective immediately even before JWT expiry.
@@ -156,7 +178,7 @@ The workflow grants only `contents: read`, cancels superseded runs for the same 
 
 ### Test strategy at the current stage
 
-Repository tests use a mocked Prisma client to verify query shape and security filters quickly: for example, active-session lookups require the requesting user, and refresh-token consumption requires a token that is unused, unrevoked, and unexpired. Fastify tests cover the health endpoint and credentialed CORS configuration.
+Repository tests use a mocked Prisma client to verify query shape and security filters quickly: for example, active-session lookups require the requesting user, and refresh-token consumption requires a token that is unused, unrevoked, and unexpired. Fastify tests cover the health endpoint, credentialed CORS configuration, OAuth transaction cookies, PKCE parameters, state mismatch rejection, callback handoff, and identity-account resolution.
 
 Later stages will add integration tests against PostgreSQL for token rotation and end-to-end tests for OAuth callback, state, PKCE, and session-revocation scenarios. This layered approach keeps feedback fast now while reserving full infrastructure tests for flows that need them.
 
@@ -168,4 +190,4 @@ To make it a merge gate, configure GitHub branch protection and require the `Qua
 
 ## Current status
 
-The application foundation, data model, repositories, initial migration, and CI workflow are in place. OAuth providers, tokens, authorization middleware, and the session-management UI are intentionally introduced in subsequent small stages.
+The application foundation, data model, repositories, initial migration, CI workflow, and Google OIDC identity flow are in place. Application session tokens, authorization middleware, GitHub account linking, and the session-management UI are intentionally introduced in subsequent small stages.
