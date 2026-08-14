@@ -15,7 +15,7 @@ export class RefreshTokensRepository {
   public findByTokenHash(tokenHash: string) {
     return this.database.refreshToken.findUnique({
       where: { tokenHash },
-      include: { session: true }
+      include: { session: { include: { account: { include: { user: true } } } } }
     });
   }
 

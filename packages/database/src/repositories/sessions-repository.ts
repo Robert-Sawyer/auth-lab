@@ -20,7 +20,7 @@ export class SessionsRepository {
         revokedAt: null,
         expiresAt: { gt: this.clock() }
       },
-      include: { account: true }
+      include: { account: { include: { user: true } } }
     });
   }
 
@@ -39,6 +39,13 @@ export class SessionsRepository {
   public revokeByIdForUser(id: string, userId: string) {
     return this.database.session.updateMany({
       where: { id, account: { userId }, revokedAt: null },
+      data: { revokedAt: this.clock() }
+    });
+  }
+
+  public revokeById(id: string) {
+    return this.database.session.updateMany({
+      where: { id, revokedAt: null },
       data: { revokedAt: this.clock() }
     });
   }

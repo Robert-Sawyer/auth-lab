@@ -1,8 +1,13 @@
-import { AccountsRepository, createPrismaClient, UsersRepository } from "@auth-lab/database";
+import {
+  AccountsRepository,
+  createPrismaClient,
+  UsersRepository
+} from "@auth-lab/database";
 
 import { GoogleIdentityResolver } from "./auth/google/google-identity-resolver.js";
 import { GoogleOidcClient } from "./auth/google/google-oidc-client.js";
 import { GoogleSignInService } from "./auth/google/google-sign-in-service.js";
+import { SessionLifecycleService } from "./auth/session/session-lifecycle-service.js";
 import { createApp } from "./app.js";
 import { getConfig } from "./config.js";
 
@@ -11,11 +16,21 @@ const database = config.databaseUrl ? createPrismaClient(config.databaseUrl) : u
 const googleIdentityResolver = database
   ? new GoogleIdentityResolver(new UsersRepository(database), new AccountsRepository(database))
   : undefined;
+const sessionLifecycle = database
+  ? new SessionLifecycleService({
+      accessTokenSecret: config.accessTokenSecret,
+      accessTokenTtlSeconds: config.accessTokenTtlSeconds,
+      database,
+      refreshTokenPepper: config.refreshTokenPepper,
+      sessionTtlDays: config.sessionTtlDays
+    })
+  : undefined;
 const app = createApp({
   webOrigin: config.webOrigin,
   oauthTransactionCookieSecret: config.oauthTransactionCookieSecret,
   secureCookies: config.isProduction,
   getGoogleOAuthConfig: config.getGoogleOAuthConfig,
+  sessionLifecycle,
   completeGoogleSignIn: googleIdentityResolver
     ? {
         complete: (input) =>

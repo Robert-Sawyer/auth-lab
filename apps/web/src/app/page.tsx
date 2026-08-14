@@ -27,7 +27,7 @@ async function getApiHealth(): Promise<ApiHealth | null> {
 
 function getOAuthStatusMessage(oauth: string | string[] | undefined) {
   if (oauth === "google-complete") {
-    return "Google identity verified and saved. Session tokens arrive in the next stage.";
+    return "Google identity verified and a browser session was started. The app can now exchange its refresh cookie for a short-lived access token.";
   }
 
   if (oauth === "google-denied") {

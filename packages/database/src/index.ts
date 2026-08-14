@@ -6,6 +6,7 @@ export { UsersRepository } from "./repositories/users-repository.js";
 export { OAuthProvider, UserRole } from "./generated/prisma/client.js";
 export type {
   AuthDatabase,
+  AuthDatabaseClient,
   CreateAccountForNewUserInput,
   CreateAccountInput,
   CreateRefreshTokenInput,

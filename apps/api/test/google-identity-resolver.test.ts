@@ -16,11 +16,13 @@ describe("GoogleIdentityResolver", () => {
   it("returns the user already linked to a Google provider account", async () => {
     const users = {
       findByEmail: vi.fn(),
-      findById: vi.fn().mockResolvedValue({ id: "user-id", email: identity.email, name: identity.name })
+      findById: vi
+        .fn()
+        .mockResolvedValue({ id: "user-id", email: identity.email, name: identity.name, role: "USER" })
     };
     const accounts = {
       createForNewUser: vi.fn(),
-      findByProviderAccount: vi.fn().mockResolvedValue({ userId: "user-id" })
+      findByProviderAccount: vi.fn().mockResolvedValue({ id: "google-account-id", userId: "user-id" })
     };
     const resolver = new GoogleIdentityResolver(
       users as unknown as UsersRepository,
@@ -28,9 +30,11 @@ describe("GoogleIdentityResolver", () => {
     );
 
     await expect(resolver.resolve(identity)).resolves.toEqual({
+      accountId: "google-account-id",
       id: "user-id",
       email: identity.email,
-      name: identity.name
+      name: identity.name,
+      role: "USER"
     });
     expect(users.findByEmail).not.toHaveBeenCalled();
     expect(accounts.createForNewUser).not.toHaveBeenCalled();
@@ -55,13 +59,13 @@ describe("GoogleIdentityResolver", () => {
   });
 
   it("creates the user and provider account atomically for a new identity", async () => {
-    const createdUser = { id: "new-user", email: identity.email, name: identity.name };
+    const createdUser = { id: "new-user", email: identity.email, name: identity.name, role: "USER" };
     const users = {
       findByEmail: vi.fn().mockResolvedValue(null),
       findById: vi.fn()
     };
     const accounts = {
-      createForNewUser: vi.fn().mockResolvedValue({ user: createdUser }),
+      createForNewUser: vi.fn().mockResolvedValue({ id: "new-google-account", user: createdUser }),
       findByProviderAccount: vi.fn().mockResolvedValue(null)
     };
     const resolver = new GoogleIdentityResolver(
@@ -69,7 +73,10 @@ describe("GoogleIdentityResolver", () => {
       accounts as unknown as AccountsRepository
     );
 
-    await expect(resolver.resolve(identity)).resolves.toEqual(createdUser);
+    await expect(resolver.resolve(identity)).resolves.toEqual({
+      ...createdUser,
+      accountId: "new-google-account"
+    });
     expect(accounts.createForNewUser).toHaveBeenCalledWith({
       provider: "GOOGLE",
       providerAccountId: identity.providerAccountId,
