@@ -9,15 +9,17 @@ export type GoogleUserResolver = {
   resolve(identity: GoogleIdentity): Promise<ResolvedGoogleUser>;
 };
 
-export class GoogleSignInService {
-  public constructor(
-    private readonly oidcClient: GoogleIdentityVerifier,
-    private readonly identityResolver: GoogleUserResolver
-  ) {}
+export function createGoogleSignInService(
+  oidcClient: GoogleIdentityVerifier,
+  identityResolver: GoogleUserResolver
+) {
+  return {
+    async complete(input: CompleteGoogleAuthorizationInput): Promise<ResolvedGoogleUser> {
+      const identity = await oidcClient.completeAuthorizationCode(input);
 
-  public async complete(input: CompleteGoogleAuthorizationInput): Promise<ResolvedGoogleUser> {
-    const identity = await this.oidcClient.completeAuthorizationCode(input);
-
-    return this.identityResolver.resolve(identity);
-  }
+      return identityResolver.resolve(identity);
+    }
+  };
 }
+
+export type GoogleSignInService = ReturnType<typeof createGoogleSignInService>;

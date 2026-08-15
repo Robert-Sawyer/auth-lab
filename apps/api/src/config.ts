@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 
 import { config } from "dotenv";
 
-import { OAuthConfigurationError } from "./auth/errors.js";
+import { createOAuthConfigurationError } from "./auth/errors.js";
 import type { GoogleOAuthConfig } from "./auth/google/google-oidc-client.js";
 
 config({
@@ -72,7 +72,7 @@ function readGoogleOAuthConfig(): GoogleOAuthConfig {
   const redirectUri = process.env.GOOGLE_REDIRECT_URI;
 
   if (!isConfiguredValue(clientId) || !isConfiguredValue(clientSecret) || !isConfiguredValue(redirectUri)) {
-    throw new OAuthConfigurationError();
+    throw createOAuthConfigurationError();
   }
 
   return { clientId, clientSecret, redirectUri };

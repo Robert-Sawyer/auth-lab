@@ -1,9 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { OAuthCallbackError } from "../src/auth/errors.js";
-import { GoogleOidcClient } from "../src/auth/google/google-oidc-client.js";
+import { createGoogleOidcClient } from "../src/auth/google/google-oidc-client.js";
 
-describe("GoogleOidcClient", () => {
+describe("createGoogleOidcClient", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
@@ -16,7 +15,7 @@ describe("GoogleOidcClient", () => {
       })
     );
     vi.stubGlobal("fetch", fetchMock);
-    const client = new GoogleOidcClient({
+    const client = createGoogleOidcClient({
       clientId: "google-client-id",
       clientSecret: "google-client-secret",
       redirectUri: "http://localhost:3001/auth/google/callback"
@@ -28,7 +27,7 @@ describe("GoogleOidcClient", () => {
         codeVerifier: "original-pkce-verifier",
         nonce: "original-nonce"
       })
-    ).rejects.toBeInstanceOf(OAuthCallbackError);
+    ).rejects.toMatchObject({ code: "OAUTH_CALLBACK_FAILED" });
 
     const [, request] = fetchMock.mock.calls[0] as [string, RequestInit];
     const body = new URLSearchParams(String(request.body));

@@ -1,3 +1,5 @@
+import { SessionDashboard } from "../components/session-dashboard";
+
 export const dynamic = "force-dynamic";
 
 type ApiHealth = {
@@ -50,29 +52,5 @@ export default async function Home({ searchParams }: HomePageProps) {
   const oauthStatus = getOAuthStatusMessage((await searchParams).oauth);
   const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
-  return (
-    <main>
-      <section className="hero" aria-labelledby="page-title">
-        <p className="eyebrow">Authentication lifecycle lab</p>
-        <h1 id="page-title">auth-lab</h1>
-        <p className="intro">
-          Inspect how OAuth, tokens, and session controls work together—one deliberately small step at a time.
-        </p>
-
-        <a className="google-button" href={`${apiUrl}/auth/google`}>
-          Continue with Google
-        </a>
-
-        {oauthStatus ? <p className="oauth-notice">{oauthStatus}</p> : null}
-
-        <div className={`status ${apiHealth ? "status--ready" : "status--waiting"}`}>
-          <span aria-hidden="true" className="status-dot" />
-          <div>
-            <p>Fastify API</p>
-            <strong>{apiHealth ? `${apiHealth.service}: ${apiHealth.status}` : "waiting for a connection"}</strong>
-          </div>
-        </div>
-      </section>
-    </main>
-  );
+  return <SessionDashboard apiHealth={apiHealth} apiUrl={apiUrl} oauthNotice={oauthStatus} />;
 }

@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { AccountsRepository } from "../src/repositories/accounts-repository.js";
-import { RefreshTokensRepository } from "../src/repositories/refresh-tokens-repository.js";
-import { SessionsRepository } from "../src/repositories/sessions-repository.js";
-import { UsersRepository } from "../src/repositories/users-repository.js";
+import { createAccountsRepository } from "../src/repositories/accounts-repository.js";
+import { createRefreshTokensRepository } from "../src/repositories/refresh-tokens-repository.js";
+import { createSessionsRepository } from "../src/repositories/sessions-repository.js";
+import { createUsersRepository } from "../src/repositories/users-repository.js";
 import type { AuthDatabase } from "../src/repositories/types.js";
 
 function createDatabaseMock() {
@@ -42,8 +42,8 @@ describe("database repositories", () => {
   it("keeps user identity separate from a provider account", () => {
     const database = createDatabaseMock();
     const authDatabase = asAuthDatabase(database);
-    const users = new UsersRepository(authDatabase);
-    const accounts = new AccountsRepository(authDatabase);
+    const users = createUsersRepository(authDatabase);
+    const accounts = createAccountsRepository(authDatabase);
 
     users.create({ email: "person@example.com", name: "Ada Lovelace" });
     accounts.create({
@@ -70,7 +70,7 @@ describe("database repositories", () => {
 
   it("looks up accounts using the provider-specific compound key", () => {
     const database = createDatabaseMock();
-    const accounts = new AccountsRepository(asAuthDatabase(database));
+    const accounts = createAccountsRepository(asAuthDatabase(database));
 
     accounts.findByProviderAccount("GITHUB", "octocat-42");
 
@@ -83,7 +83,7 @@ describe("database repositories", () => {
 
   it("only lists sessions that belong to the user and are still active", () => {
     const database = createDatabaseMock();
-    const sessions = new SessionsRepository(asAuthDatabase(database), () => now);
+    const sessions = createSessionsRepository(asAuthDatabase(database), () => now);
 
     sessions.listActiveForUser("c4e4af60-1e53-4541-b6fa-03bac9c381b5");
 
@@ -100,7 +100,7 @@ describe("database repositories", () => {
 
   it("consumes a refresh token only when it has not been used, revoked, or expired", () => {
     const database = createDatabaseMock();
-    const refreshTokens = new RefreshTokensRepository(asAuthDatabase(database), () => now);
+    const refreshTokens = createRefreshTokensRepository(asAuthDatabase(database), () => now);
 
     refreshTokens.markUsedAndReplaced(
       "965cce33-3be9-4fe1-8a26-7de3e9e156ee",
@@ -118,6 +118,21 @@ describe("database repositories", () => {
         usedAt: now,
         replacedByTokenId: "f7116b06-b592-4d0e-a157-48a73422fe47"
       }
+    });
+  });
+
+  it("revokes every refresh token that belongs to a user's sessions", () => {
+    const database = createDatabaseMock();
+    const refreshTokens = createRefreshTokensRepository(asAuthDatabase(database), () => now);
+
+    refreshTokens.revokeForUser("c4e4af60-1e53-4541-b6fa-03bac9c381b5");
+
+    expect(database.refreshToken.updateMany).toHaveBeenCalledWith({
+      where: {
+        session: { account: { userId: "c4e4af60-1e53-4541-b6fa-03bac9c381b5" } },
+        revokedAt: null
+      },
+      data: { revokedAt: now }
     });
   });
 });

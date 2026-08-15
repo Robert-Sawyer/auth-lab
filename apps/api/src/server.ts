@@ -1,23 +1,24 @@
 import {
-  AccountsRepository,
+  createAccountsRepository,
   createPrismaClient,
-  UsersRepository
+  createUsersRepository
 } from "@auth-lab/database";
 
-import { GoogleIdentityResolver } from "./auth/google/google-identity-resolver.js";
-import { GoogleOidcClient } from "./auth/google/google-oidc-client.js";
-import { GoogleSignInService } from "./auth/google/google-sign-in-service.js";
-import { SessionLifecycleService } from "./auth/session/session-lifecycle-service.js";
+import { createGoogleIdentityResolver } from "./auth/google/google-identity-resolver.js";
+import { createGoogleOidcClient } from "./auth/google/google-oidc-client.js";
+import { createGoogleSignInService } from "./auth/google/google-sign-in-service.js";
+import { createSessionLifecycleService } from "./auth/session/session-lifecycle-service.js";
+import { createSessionManagementService } from "./auth/session/session-management-service.js";
 import { createApp } from "./app.js";
 import { getConfig } from "./config.js";
 
 const config = getConfig();
 const database = config.databaseUrl ? createPrismaClient(config.databaseUrl) : undefined;
 const googleIdentityResolver = database
-  ? new GoogleIdentityResolver(new UsersRepository(database), new AccountsRepository(database))
+  ? createGoogleIdentityResolver(createUsersRepository(database), createAccountsRepository(database))
   : undefined;
 const sessionLifecycle = database
-  ? new SessionLifecycleService({
+  ? createSessionLifecycleService({
       accessTokenSecret: config.accessTokenSecret,
       accessTokenTtlSeconds: config.accessTokenTtlSeconds,
       database,
@@ -25,17 +26,19 @@ const sessionLifecycle = database
       sessionTtlDays: config.sessionTtlDays
     })
   : undefined;
+const sessionManagement = database ? createSessionManagementService(database) : undefined;
 const app = createApp({
   webOrigin: config.webOrigin,
   oauthTransactionCookieSecret: config.oauthTransactionCookieSecret,
   secureCookies: config.isProduction,
   getGoogleOAuthConfig: config.getGoogleOAuthConfig,
   sessionLifecycle,
+  sessionManagement,
   completeGoogleSignIn: googleIdentityResolver
     ? {
         complete: (input) =>
-          new GoogleSignInService(
-            new GoogleOidcClient(config.getGoogleOAuthConfig()),
+          createGoogleSignInService(
+            createGoogleOidcClient(config.getGoogleOAuthConfig()),
             googleIdentityResolver
           ).complete(input)
       }

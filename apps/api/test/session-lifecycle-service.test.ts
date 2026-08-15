@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { AuthDatabaseClient } from "@auth-lab/database";
 
-import { SessionLifecycleService } from "../src/auth/session/session-lifecycle-service.js";
+import { createSessionLifecycleService } from "../src/auth/session/session-lifecycle-service.js";
 
 const user = {
   accountId: "account-1",
@@ -12,7 +12,7 @@ const user = {
   role: "USER" as const
 };
 
-describe("SessionLifecycleService", () => {
+describe("createSessionLifecycleService", () => {
   it("rotates a refresh token and revokes the whole session when an old token is reused", async () => {
     const database = createSessionDatabase();
     const lifecycle = createLifecycle(database);
@@ -67,7 +67,7 @@ describe("SessionLifecycleService", () => {
 });
 
 function createLifecycle(database: ReturnType<typeof createSessionDatabase>) {
-  return new SessionLifecycleService({
+  return createSessionLifecycleService({
     accessTokenSecret: "test-access-token-secret-that-is-long-enough",
     database: database.client,
     refreshTokenPepper: "test-refresh-token-pepper-that-is-long-enough",

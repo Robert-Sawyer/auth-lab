@@ -6,33 +6,35 @@ import type {
   CreateAccountInput
 } from "./types.js";
 
-export class AccountsRepository {
-  public constructor(private readonly database: AuthDatabase) {}
+export function createAccountsRepository(database: AuthDatabase) {
+  return {
+    findByProviderAccount(provider: OAuthProvider, providerAccountId: string) {
+      return database.account.findUnique({
+        where: { provider_providerAccountId: { provider, providerAccountId } }
+      });
+    },
 
-  public findByProviderAccount(provider: OAuthProvider, providerAccountId: string) {
-    return this.database.account.findUnique({
-      where: { provider_providerAccountId: { provider, providerAccountId } }
-    });
-  }
+    findByUserId(userId: string) {
+      return database.account.findMany({
+        where: { userId },
+        orderBy: { createdAt: "asc" }
+      });
+    },
 
-  public findByUserId(userId: string) {
-    return this.database.account.findMany({
-      where: { userId },
-      orderBy: { createdAt: "asc" }
-    });
-  }
+    create(input: CreateAccountInput) {
+      return database.account.create({ data: input });
+    },
 
-  public create(input: CreateAccountInput) {
-    return this.database.account.create({ data: input });
-  }
-
-  public createForNewUser({ user, ...account }: CreateAccountForNewUserInput) {
-    return this.database.account.create({
-      data: {
-        ...account,
-        user: { create: user }
-      },
-      include: { user: true }
-    });
-  }
+    createForNewUser({ user, ...account }: CreateAccountForNewUserInput) {
+      return database.account.create({
+        data: {
+          ...account,
+          user: { create: user }
+        },
+        include: { user: true }
+      });
+    }
+  };
 }
+
+export type AccountsRepository = ReturnType<typeof createAccountsRepository>;

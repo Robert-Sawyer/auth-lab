@@ -1,17 +1,19 @@
 import type { AuthDatabase, CreateUserInput } from "./types.js";
 
-export class UsersRepository {
-  public constructor(private readonly database: AuthDatabase) {}
+export function createUsersRepository(database: AuthDatabase) {
+  return {
+    findByEmail(email: string) {
+      return database.user.findUnique({ where: { email } });
+    },
 
-  public findByEmail(email: string) {
-    return this.database.user.findUnique({ where: { email } });
-  }
+    findById(id: string) {
+      return database.user.findUnique({ where: { id } });
+    },
 
-  public findById(id: string) {
-    return this.database.user.findUnique({ where: { id } });
-  }
-
-  public create(input: CreateUserInput) {
-    return this.database.user.create({ data: input });
-  }
+    create(input: CreateUserInput) {
+      return database.user.create({ data: input });
+    }
+  };
 }
+
+export type UsersRepository = ReturnType<typeof createUsersRepository>;
