@@ -2,6 +2,8 @@ import type { OAuthProvider, PrismaClient, UserRole } from "../generated/prisma/
 
 export type AuthDatabase = Pick<PrismaClient, "user" | "account" | "session" | "refreshToken">;
 
+export type AuthDatabaseClient = AuthDatabase & Pick<PrismaClient, "$transaction">;
+
 export type CreateUserInput = {
   email: string;
   emailVerifiedAt?: Date | null;
@@ -32,6 +34,7 @@ export type CreateSessionInput = {
 export type CreateRefreshTokenInput = {
   expiresAt: Date;
   familyId: string;
+  id?: string;
   sessionId: string;
   tokenHash: string;
 };

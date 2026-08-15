@@ -50,7 +50,7 @@ describe("Google OAuth routes", () => {
   });
 
   it("accepts only the matching state and then clears the one-time transaction cookie", async () => {
-    const complete = vi.fn().mockResolvedValue({ id: "user-id" });
+    const complete = vi.fn().mockResolvedValue(testUser);
     const app = createGoogleTestApp(complete);
     apps.add(app);
 
@@ -64,7 +64,15 @@ describe("Google OAuth routes", () => {
 
     expect(callback.statusCode).toBe(302);
     expect(callback.headers.location).toBe("http://localhost:3000/?oauth=google-complete");
-    expect(callback.headers["set-cookie"]).toContain("oauth_google_transaction=;");
+    expect(getCookieHeaders(callback)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("oauth_google_transaction=;"),
+        expect.stringContaining("refresh_token="),
+        expect.stringContaining("HttpOnly"),
+        expect.stringContaining("Path=/auth"),
+        expect.stringContaining("SameSite=Lax")
+      ])
+    );
     expect(complete).toHaveBeenCalledWith({
       code: "authorization-code",
       codeVerifier: transaction.codeVerifier,
@@ -96,22 +104,41 @@ function createGoogleTestApp(complete: ReturnType<typeof vi.fn>) {
     oauthTransactionCookieSecret: "test-cookie-secret-that-is-long-enough-to-sign-values",
     secureCookies: false,
     getGoogleOAuthConfig: () => googleConfig,
-    completeGoogleSignIn: { complete }
+    completeGoogleSignIn: { complete },
+    sessionLifecycle: {
+      authenticateAccessToken: vi.fn(),
+      createSession: vi.fn().mockResolvedValue({
+        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        refreshToken: "refresh-token-created-after-google-sign-in"
+      }),
+      logout: vi.fn(),
+      rotateRefreshToken: vi.fn()
+    } as never
   });
 }
 
+const testUser = {
+  accountId: "google-account-id",
+  email: "person@example.com",
+  id: "user-id",
+  name: "Ada Lovelace",
+  role: "USER" as const
+};
+
 function getCookieHeader(response: { headers: Record<string, string | string[] | undefined> }): string {
+  const firstCookie = getCookieHeaders(response)[0];
+
+  if (!firstCookie) {
+    throw new Error("Expected OAuth transaction cookie.");
+  }
+
+  return firstCookie;
+}
+
+function getCookieHeaders(response: { headers: Record<string, string | string[] | undefined> }): string[] {
   const setCookie = response.headers["set-cookie"];
 
-  if (typeof setCookie === "string") {
-    return setCookie;
-  }
-
-  if (Array.isArray(setCookie) && setCookie[0]) {
-    return setCookie[0];
-  }
-
-  throw new Error("Expected OAuth transaction cookie.");
+  return typeof setCookie === "string" ? [setCookie] : (setCookie ?? []);
 }
 
 function getCookiePair(response: { headers: Record<string, string | string[] | undefined> }): string {

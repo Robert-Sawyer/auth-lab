@@ -2,7 +2,8 @@ import {
   AccountsRepository,
   UsersRepository,
   type CreateUserInput,
-  type OAuthProvider
+  type OAuthProvider,
+  type UserRole
 } from "@auth-lab/database";
 
 import { AccountLinkRequiredError, OAuthCallbackError } from "../errors.js";
@@ -11,9 +12,11 @@ import type { GoogleIdentity } from "./google-oidc-client.js";
 const GOOGLE_PROVIDER: OAuthProvider = "GOOGLE";
 
 export type ResolvedGoogleUser = {
+  accountId: string;
   email: string;
   id: string;
   name: string | null;
+  role: UserRole;
 };
 
 export class GoogleIdentityResolver {
@@ -35,7 +38,7 @@ export class GoogleIdentityResolver {
         throw new OAuthCallbackError("Google account is not associated with an active user.");
       }
 
-      return pickUser(user);
+      return pickUser(user, existingAccount.id);
     }
 
     const existingUser = await this.users.findByEmail(identity.email);
@@ -53,7 +56,7 @@ export class GoogleIdentityResolver {
       user: createUserInput(identity)
     });
 
-    return pickUser(account.user);
+    return pickUser(account.user, account.id);
   }
 }
 
@@ -66,6 +69,9 @@ function createUserInput(identity: GoogleIdentity): CreateUserInput {
   };
 }
 
-function pickUser(user: ResolvedGoogleUser): ResolvedGoogleUser {
-  return { id: user.id, email: user.email, name: user.name };
+function pickUser(
+  user: Pick<ResolvedGoogleUser, "email" | "id" | "name" | "role">,
+  accountId: string
+): ResolvedGoogleUser {
+  return { accountId, id: user.id, email: user.email, name: user.name, role: user.role };
 }

@@ -1,7 +1,8 @@
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
-import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 
+import { createRequireAuthentication } from "./auth/authentication-middleware.js";
 import { AccountLinkRequiredError, OAuthCallbackError, OAuthConfigurationError } from "./auth/errors.js";
 import {
   createGoogleAuthorizationUrl,
@@ -14,14 +15,30 @@ import {
   isValidGoogleOAuthCallback,
   serializeGoogleOAuthTransaction
 } from "./auth/google/transaction.js";
+import {
+  getClearRefreshTokenCookieOptions,
+  getRefreshTokenCookieOptions,
+  REFRESH_TOKEN_COOKIE
+} from "./auth/session/refresh-token-cookie.js";
+import {
+  type AuthenticatedSession,
+  type RefreshTokenRotation,
+  type SessionLifecycleService,
+  type SessionUser
+} from "./auth/session/session-lifecycle-service.js";
 import { getConfig } from "./config.js";
 
 const GOOGLE_OAUTH_TRANSACTION_COOKIE = "oauth_google_transaction";
 const OAUTH_TRANSACTION_COOKIE_MAX_AGE_SECONDS = 10 * 60;
 
 type GoogleSignIn = {
-  complete(input: CompleteGoogleAuthorizationInput): Promise<unknown>;
+  complete(input: CompleteGoogleAuthorizationInput): Promise<SessionUser>;
 };
+
+type SessionLifecycle = Pick<
+  SessionLifecycleService,
+  "authenticateAccessToken" | "createSession" | "logout" | "rotateRefreshToken"
+>;
 
 type CreateAppOptions = {
   completeGoogleSignIn?: GoogleSignIn;
@@ -29,6 +46,7 @@ type CreateAppOptions = {
   logger?: boolean;
   oauthTransactionCookieSecret?: string;
   secureCookies?: boolean;
+  sessionLifecycle?: SessionLifecycle;
   webOrigin?: string;
 };
 
@@ -41,6 +59,7 @@ export function createApp(options: CreateAppOptions = {}) {
   const getGoogleOAuthConfig = options.getGoogleOAuthConfig ?? config.getGoogleOAuthConfig;
 
   app.register(cookie, { secret: cookieSecret });
+  app.decorateRequest("auth", null);
 
   app.register(cors, {
     origin: webOrigin,
@@ -71,6 +90,12 @@ export function createApp(options: CreateAppOptions = {}) {
     completeGoogleSignIn: options.completeGoogleSignIn,
     getGoogleOAuthConfig,
     secureCookies,
+    sessionLifecycle: options.sessionLifecycle,
+    webOrigin
+  });
+  registerSessionAuthRoutes(app, {
+    secureCookies,
+    sessionLifecycle: options.sessionLifecycle,
     webOrigin
   });
 
@@ -81,6 +106,7 @@ type GoogleAuthRoutesOptions = {
   completeGoogleSignIn?: GoogleSignIn;
   getGoogleOAuthConfig: () => GoogleOAuthConfig;
   secureCookies: boolean;
+  sessionLifecycle?: SessionLifecycle;
   webOrigin: string;
 };
 
@@ -137,13 +163,29 @@ function registerGoogleAuthRoutes(app: FastifyInstance, options: GoogleAuthRoute
     }
 
     try {
-      await auth.completeGoogleSignIn.complete({
+      if (!options.sessionLifecycle) {
+        return reply.code(503).send({ error: "Session storage is not configured." });
+      }
+
+      const user = await auth.completeGoogleSignIn.complete({
         code: request.query.code,
         codeVerifier: transaction.codeVerifier,
         nonce: transaction.nonce
       });
+      const session = await options.sessionLifecycle.createSession(user, {
+        ipAddress: request.ip,
+        userAgent: readUserAgent(request)
+      });
 
-      // Session tokens are deliberately introduced in the next stage.
+      reply.setCookie(
+        REFRESH_TOKEN_COOKIE,
+        session.refreshToken,
+        getRefreshTokenCookieOptions({
+          maxAge: getRemainingLifetimeInSeconds(session.expiresAt),
+          secure: options.secureCookies
+        })
+      );
+
       return reply.redirect(createWebOAuthResultUrl(options.webOrigin, "google-complete"));
     } catch (error) {
       if (error instanceof AccountLinkRequiredError) {
@@ -180,6 +222,74 @@ function getGoogleAuthDependencies(options: GoogleAuthRoutesOptions) {
   }
 }
 
+type SessionAuthRoutesOptions = {
+  secureCookies: boolean;
+  sessionLifecycle?: SessionLifecycle;
+  webOrigin: string;
+};
+
+function registerSessionAuthRoutes(app: FastifyInstance, options: SessionAuthRoutesOptions) {
+  if (!options.sessionLifecycle) {
+    app.post("/auth/refresh", async (_request, reply) => {
+      return reply.code(503).send({ error: "Session storage is not configured." });
+    });
+    app.post("/auth/logout", async (_request, reply) => {
+      return reply.code(503).send({ error: "Session storage is not configured." });
+    });
+    app.get("/auth/me", async (_request, reply) => {
+      return reply.code(503).send({ error: "Session storage is not configured." });
+    });
+    return;
+  }
+
+  const sessionLifecycle = options.sessionLifecycle;
+  const requireAuthentication = createRequireAuthentication(sessionLifecycle);
+
+  app.post("/auth/refresh", async (request, reply) => {
+    if (!hasTrustedOrigin(request, options.webOrigin)) {
+      return reply.code(403).send({ error: "The request origin is not allowed." });
+    }
+
+    const rotation = await sessionLifecycle.rotateRefreshToken(
+      request.cookies[REFRESH_TOKEN_COOKIE]
+    );
+
+    if (rotation.kind === "invalid") {
+      reply.clearCookie(REFRESH_TOKEN_COOKIE, getClearRefreshTokenCookieOptions(options.secureCookies));
+      return reply.code(401).send({ error: "The refresh token is invalid or expired." });
+    }
+
+    setRefreshTokenCookie(reply, rotation, options.secureCookies);
+    return {
+      accessToken: rotation.accessToken,
+      expiresIn: getRemainingLifetimeInSeconds(rotation.accessTokenExpiresAt),
+      tokenType: "Bearer"
+    };
+  });
+
+  app.post("/auth/logout", async (request, reply) => {
+    if (!hasTrustedOrigin(request, options.webOrigin)) {
+      return reply.code(403).send({ error: "The request origin is not allowed." });
+    }
+
+    await sessionLifecycle.logout(request.cookies[REFRESH_TOKEN_COOKIE]);
+    reply.clearCookie(REFRESH_TOKEN_COOKIE, getClearRefreshTokenCookieOptions(options.secureCookies));
+    return reply.code(204).send();
+  });
+
+  app.get(
+    "/auth/me",
+    { preHandler: requireAuthentication },
+    async (request, reply) => {
+      if (!request.auth) {
+        return reply.code(401).send({ error: "The access token is invalid or the session is no longer active." });
+      }
+
+      return toAuthMeResponse(request.auth);
+    }
+  );
+}
+
 function getOAuthTransactionCookieOptions(secure: boolean) {
   return {
     httpOnly: true,
@@ -210,4 +320,42 @@ function createWebOAuthResultUrl(webOrigin: string, status: string): string {
   url.searchParams.set("oauth", status);
 
   return url.toString();
+}
+
+function getRemainingLifetimeInSeconds(expiresAt: Date): number {
+  return Math.max(0, Math.floor((expiresAt.getTime() - Date.now()) / 1000));
+}
+
+function hasTrustedOrigin(request: FastifyRequest, webOrigin: string): boolean {
+  const origin = request.headers.origin;
+
+  return origin === undefined || origin === webOrigin;
+}
+
+function readUserAgent(request: FastifyRequest): string | undefined {
+  const userAgent = request.headers["user-agent"];
+
+  return typeof userAgent === "string" ? userAgent : undefined;
+}
+
+function setRefreshTokenCookie(
+  reply: FastifyReply,
+  rotation: Extract<RefreshTokenRotation, { kind: "rotated" }>,
+  secureCookies: boolean
+) {
+  reply.setCookie(
+    REFRESH_TOKEN_COOKIE,
+    rotation.refreshToken,
+    getRefreshTokenCookieOptions({
+      maxAge: getRemainingLifetimeInSeconds(rotation.expiresAt),
+      secure: secureCookies
+    })
+  );
+}
+
+function toAuthMeResponse(auth: AuthenticatedSession) {
+  return {
+    session: { expiresAt: auth.sessionExpiresAt, id: auth.sessionId },
+    user: auth.user
+  };
 }
