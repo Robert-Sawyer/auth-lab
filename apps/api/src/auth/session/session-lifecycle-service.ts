@@ -1,9 +1,11 @@
 import { createHmac, randomBytes, randomUUID } from "node:crypto";
 
 import {
-  RefreshTokensRepository,
-  SessionsRepository,
+  createRefreshTokensRepository,
+  createSessionsRepository,
   type AuthDatabaseClient,
+  type RefreshTokensRepository,
+  type SessionsRepository,
   type UserRole
 } from "@auth-lab/database";
 import { SignJWT, jwtVerify } from "jose";
@@ -54,32 +56,44 @@ export type SessionLifecycleServiceOptions = {
   sessionTtlDays?: number;
 };
 
-export class SessionLifecycleService {
-  private readonly accessTokenSecret: Uint8Array;
-  private readonly accessTokenTtlSeconds: number;
-  private readonly clock: Clock;
-  private readonly refreshTokenPepper: string;
-  private readonly sessionTtlDays: number;
+export function createSessionLifecycleService(options: SessionLifecycleServiceOptions) {
+  const accessTokenSecret = new TextEncoder().encode(options.accessTokenSecret);
+  const accessTokenTtlSeconds = options.accessTokenTtlSeconds ?? DEFAULT_ACCESS_TOKEN_TTL_SECONDS;
+  const clock = options.clock ?? (() => new Date());
+  const refreshTokenPepper = options.refreshTokenPepper;
+  const sessionTtlDays = options.sessionTtlDays ?? DEFAULT_SESSION_TTL_DAYS;
 
-  public constructor(private readonly options: SessionLifecycleServiceOptions) {
-    this.accessTokenSecret = new TextEncoder().encode(options.accessTokenSecret);
-    this.accessTokenTtlSeconds = options.accessTokenTtlSeconds ?? DEFAULT_ACCESS_TOKEN_TTL_SECONDS;
-    this.clock = options.clock ?? (() => new Date());
-    this.refreshTokenPepper = options.refreshTokenPepper;
-    this.sessionTtlDays = options.sessionTtlDays ?? DEFAULT_SESSION_TTL_DAYS;
+  function hashRefreshToken(refreshToken: string): string {
+    return createHmac("sha256", refreshTokenPepper).update(refreshToken).digest("base64url");
   }
 
-  public async createSession(
+  async function createAccessToken(
+    user: Pick<SessionUser, "id" | "role">,
+    sessionId: string
+  ): Promise<string> {
+    const now = clock();
+
+    return new SignJWT({ role: user.role, sid: sessionId })
+      .setAudience(JWT_AUDIENCE)
+      .setExpirationTime(Math.floor(now.getTime() / 1000) + accessTokenTtlSeconds)
+      .setIssuedAt(Math.floor(now.getTime() / 1000))
+      .setIssuer(JWT_ISSUER)
+      .setProtectedHeader({ alg: JWT_ALGORITHM, typ: "JWT" })
+      .setSubject(user.id)
+      .sign(accessTokenSecret);
+  }
+
+  async function createSession(
     user: SessionUser,
     metadata: { ipAddress?: string; userAgent?: string }
   ): Promise<SessionCreation> {
-    const now = this.clock();
-    const expiresAt = addDays(now, this.sessionTtlDays);
+    const now = clock();
+    const expiresAt = addDays(now, sessionTtlDays);
     const refreshToken = createRefreshToken();
 
-    await this.options.database.$transaction(async (database) => {
-      const sessions = new SessionsRepository(database, this.clock);
-      const refreshTokens = new RefreshTokensRepository(database, this.clock);
+    await options.database.$transaction(async (database) => {
+      const sessions = createSessionsRepository(database, clock);
+      const refreshTokens = createRefreshTokensRepository(database, clock);
       const session = await sessions.create({
         accountId: user.accountId,
         expiresAt,
@@ -91,22 +105,22 @@ export class SessionLifecycleService {
         expiresAt,
         familyId: randomUUID(),
         sessionId: session.id,
-        tokenHash: this.hashRefreshToken(refreshToken)
+        tokenHash: hashRefreshToken(refreshToken)
       });
     });
 
     return { expiresAt, refreshToken };
   }
 
-  public async rotateRefreshToken(rawRefreshToken: string | undefined): Promise<RefreshTokenRotation> {
+  async function rotateRefreshToken(rawRefreshToken: string | undefined): Promise<RefreshTokenRotation> {
     if (!rawRefreshToken) {
       return { kind: "invalid" };
     }
 
-    const tokenHash = this.hashRefreshToken(rawRefreshToken);
-    const rotation = await this.options.database.$transaction(async (database) => {
-      const sessions = new SessionsRepository(database, this.clock);
-      const refreshTokens = new RefreshTokensRepository(database, this.clock);
+    const tokenHash = hashRefreshToken(rawRefreshToken);
+    const rotation = await options.database.$transaction(async (database) => {
+      const sessions = createSessionsRepository(database, clock);
+      const refreshTokens = createRefreshTokensRepository(database, clock);
       const currentToken = await refreshTokens.findByTokenHash(tokenHash);
 
       if (!currentToken) {
@@ -114,7 +128,7 @@ export class SessionLifecycleService {
       }
 
       const session = currentToken.session;
-      const now = this.clock();
+      const now = clock();
       const tokenCannotBeUsed =
         currentToken.revokedAt !== null ||
         currentToken.expiresAt <= now ||
@@ -130,7 +144,6 @@ export class SessionLifecycleService {
       const consumption = await refreshTokens.markUsedAndReplaced(currentToken.id, replacementTokenId);
 
       if (consumption.count !== 1) {
-        // A parallel request consumed the same token. Treat it as reuse and close the family.
         await revokeCompromisedSession(refreshTokens, sessions, currentToken.familyId, session.id);
         return { kind: "invalid" } as const;
       }
@@ -141,7 +154,7 @@ export class SessionLifecycleService {
         expiresAt: currentToken.expiresAt,
         familyId: currentToken.familyId,
         sessionId: currentToken.sessionId,
-        tokenHash: this.hashRefreshToken(replacementToken)
+        tokenHash: hashRefreshToken(replacementToken)
       });
       await sessions.touch(session.id, session.account.userId);
 
@@ -159,26 +172,24 @@ export class SessionLifecycleService {
     }
 
     return {
-      accessToken: await this.createAccessToken(rotation.user, rotation.sessionId),
-      accessTokenExpiresAt: new Date(
-        this.clock().getTime() + this.accessTokenTtlSeconds * 1000
-      ),
+      accessToken: await createAccessToken(rotation.user, rotation.sessionId),
+      accessTokenExpiresAt: new Date(clock().getTime() + accessTokenTtlSeconds * 1000),
       expiresAt: rotation.expiresAt,
       kind: "rotated",
       refreshToken: rotation.refreshToken
     };
   }
 
-  public async logout(rawRefreshToken: string | undefined): Promise<void> {
+  async function logout(rawRefreshToken: string | undefined): Promise<void> {
     if (!rawRefreshToken) {
       return;
     }
 
-    const tokenHash = this.hashRefreshToken(rawRefreshToken);
+    const tokenHash = hashRefreshToken(rawRefreshToken);
 
-    await this.options.database.$transaction(async (database) => {
-      const sessions = new SessionsRepository(database, this.clock);
-      const refreshTokens = new RefreshTokensRepository(database, this.clock);
+    await options.database.$transaction(async (database) => {
+      const sessions = createSessionsRepository(database, clock);
+      const refreshTokens = createRefreshTokensRepository(database, clock);
       const refreshToken = await refreshTokens.findByTokenHash(tokenHash);
 
       if (!refreshToken) {
@@ -190,9 +201,9 @@ export class SessionLifecycleService {
     });
   }
 
-  public async authenticateAccessToken(accessToken: string): Promise<AuthenticatedSession | null> {
+  async function authenticateAccessToken(accessToken: string): Promise<AuthenticatedSession | null> {
     try {
-      const { payload } = await jwtVerify(accessToken, this.accessTokenSecret, {
+      const { payload } = await jwtVerify(accessToken, accessTokenSecret, {
         algorithms: [JWT_ALGORITHM],
         audience: JWT_AUDIENCE,
         issuer: JWT_ISSUER
@@ -204,7 +215,7 @@ export class SessionLifecycleService {
         return null;
       }
 
-      const sessions = new SessionsRepository(this.options.database, this.clock);
+      const sessions = createSessionsRepository(options.database, clock);
       const session = await sessions.findActiveByIdForUser(sessionId, userId);
 
       if (!session) {
@@ -226,26 +237,10 @@ export class SessionLifecycleService {
     }
   }
 
-  private async createAccessToken(
-    user: Pick<SessionUser, "id" | "role">,
-    sessionId: string
-  ): Promise<string> {
-    const now = this.clock();
-
-    return new SignJWT({ role: user.role, sid: sessionId })
-      .setAudience(JWT_AUDIENCE)
-      .setExpirationTime(Math.floor(now.getTime() / 1000) + this.accessTokenTtlSeconds)
-      .setIssuedAt(Math.floor(now.getTime() / 1000))
-      .setIssuer(JWT_ISSUER)
-      .setProtectedHeader({ alg: JWT_ALGORITHM, typ: "JWT" })
-      .setSubject(user.id)
-      .sign(this.accessTokenSecret);
-  }
-
-  private hashRefreshToken(refreshToken: string): string {
-    return createHmac("sha256", this.refreshTokenPepper).update(refreshToken).digest("base64url");
-  }
+  return { authenticateAccessToken, createSession, logout, rotateRefreshToken };
 }
+
+export type SessionLifecycle = ReturnType<typeof createSessionLifecycleService>;
 
 async function revokeCompromisedSession(
   refreshTokens: RefreshTokensRepository,

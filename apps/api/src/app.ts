@@ -3,7 +3,12 @@ import cors from "@fastify/cors";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 
 import { createRequireAuthentication } from "./auth/authentication-middleware.js";
-import { AccountLinkRequiredError, OAuthCallbackError, OAuthConfigurationError } from "./auth/errors.js";
+import {
+  createOAuthConfigurationError,
+  isAccountLinkRequiredError,
+  isOAuthCallbackError,
+  isOAuthConfigurationError
+} from "./auth/errors.js";
 import {
   createGoogleAuthorizationUrl,
   type CompleteGoogleAuthorizationInput,
@@ -23,9 +28,10 @@ import {
 import {
   type AuthenticatedSession,
   type RefreshTokenRotation,
-  type SessionLifecycleService,
+  type SessionLifecycle,
   type SessionUser
 } from "./auth/session/session-lifecycle-service.js";
+import { type SessionManagement } from "./auth/session/session-management-service.js";
 import { getConfig } from "./config.js";
 
 const GOOGLE_OAUTH_TRANSACTION_COOKIE = "oauth_google_transaction";
@@ -35,9 +41,14 @@ type GoogleSignIn = {
   complete(input: CompleteGoogleAuthorizationInput): Promise<SessionUser>;
 };
 
-type SessionLifecycle = Pick<
-  SessionLifecycleService,
+type SessionAuth = Pick<
+  SessionLifecycle,
   "authenticateAccessToken" | "createSession" | "logout" | "rotateRefreshToken"
+>;
+
+type SessionManager = Pick<
+  SessionManagement,
+  "listActiveSessions" | "revokeAllSessionsForUser" | "revokeSessionForUser"
 >;
 
 type CreateAppOptions = {
@@ -46,7 +57,8 @@ type CreateAppOptions = {
   logger?: boolean;
   oauthTransactionCookieSecret?: string;
   secureCookies?: boolean;
-  sessionLifecycle?: SessionLifecycle;
+  sessionLifecycle?: SessionAuth;
+  sessionManagement?: SessionManager;
   webOrigin?: string;
 };
 
@@ -96,6 +108,7 @@ export function createApp(options: CreateAppOptions = {}) {
   registerSessionAuthRoutes(app, {
     secureCookies,
     sessionLifecycle: options.sessionLifecycle,
+    sessionManagement: options.sessionManagement,
     webOrigin
   });
 
@@ -188,11 +201,11 @@ function registerGoogleAuthRoutes(app: FastifyInstance, options: GoogleAuthRoute
 
       return reply.redirect(createWebOAuthResultUrl(options.webOrigin, "google-complete"));
     } catch (error) {
-      if (error instanceof AccountLinkRequiredError) {
+      if (isAccountLinkRequiredError(error)) {
         return reply.redirect(createWebOAuthResultUrl(options.webOrigin, "account-link-required"));
       }
 
-      if (error instanceof OAuthCallbackError) {
+      if (isOAuthCallbackError(error)) {
         request.log.warn({ error: error.message }, "Google OAuth callback rejected");
         return reply.redirect(createWebOAuthResultUrl(options.webOrigin, "google-failed"));
       }
@@ -206,7 +219,7 @@ function registerGoogleAuthRoutes(app: FastifyInstance, options: GoogleAuthRoute
 function getGoogleAuthDependencies(options: GoogleAuthRoutesOptions) {
   try {
     if (!options.completeGoogleSignIn) {
-      throw new OAuthConfigurationError();
+      throw createOAuthConfigurationError();
     }
 
     return {
@@ -214,7 +227,7 @@ function getGoogleAuthDependencies(options: GoogleAuthRoutesOptions) {
       completeGoogleSignIn: options.completeGoogleSignIn
     };
   } catch (error) {
-    if (error instanceof OAuthConfigurationError) {
+    if (isOAuthConfigurationError(error)) {
       return null;
     }
 
@@ -224,7 +237,8 @@ function getGoogleAuthDependencies(options: GoogleAuthRoutesOptions) {
 
 type SessionAuthRoutesOptions = {
   secureCookies: boolean;
-  sessionLifecycle?: SessionLifecycle;
+  sessionLifecycle?: SessionAuth;
+  sessionManagement?: SessionManager;
   webOrigin: string;
 };
 
@@ -288,6 +302,86 @@ function registerSessionAuthRoutes(app: FastifyInstance, options: SessionAuthRou
       return toAuthMeResponse(request.auth);
     }
   );
+
+  registerSessionManagementRoutes(app, {
+    requireAuthentication,
+    secureCookies: options.secureCookies,
+    sessionManagement: options.sessionManagement
+  });
+}
+
+type SessionManagementRoutesOptions = {
+  requireAuthentication: ReturnType<typeof createRequireAuthentication>;
+  secureCookies: boolean;
+  sessionManagement?: SessionManager;
+};
+
+function registerSessionManagementRoutes(
+  app: FastifyInstance,
+  options: SessionManagementRoutesOptions
+) {
+  if (!options.sessionManagement) {
+    app.get("/sessions", async (_request, reply) => {
+      return reply.code(503).send({ error: "Session management is not configured." });
+    });
+    app.delete<{ Params: { id: string } }>("/sessions/:id", async (_request, reply) => {
+      return reply.code(503).send({ error: "Session management is not configured." });
+    });
+    app.delete("/sessions", async (_request, reply) => {
+      return reply.code(503).send({ error: "Session management is not configured." });
+    });
+    return;
+  }
+
+  const sessionManagement = options.sessionManagement;
+
+  app.get("/sessions", { preHandler: options.requireAuthentication }, async (request, reply) => {
+    const auth = request.auth;
+
+    if (!auth) {
+      return reply.code(401).send({ error: "The access token is invalid or the session is no longer active." });
+    }
+
+    return {
+      sessions: await sessionManagement.listActiveSessions(auth.user.id, auth.sessionId)
+    };
+  });
+
+  app.delete<{ Params: { id: string } }>(
+    "/sessions/:id",
+    { preHandler: options.requireAuthentication },
+    async (request, reply) => {
+      const auth = request.auth;
+
+      if (!auth) {
+        return reply.code(401).send({ error: "The access token is invalid or the session is no longer active." });
+      }
+
+      const revoked = await sessionManagement.revokeSessionForUser(request.params.id, auth.user.id);
+
+      if (!revoked) {
+        return reply.code(404).send({ error: "The session was not found or is no longer active." });
+      }
+
+      if (request.params.id === auth.sessionId) {
+        reply.clearCookie(REFRESH_TOKEN_COOKIE, getClearRefreshTokenCookieOptions(options.secureCookies));
+      }
+
+      return reply.code(204).send();
+    }
+  );
+
+  app.delete("/sessions", { preHandler: options.requireAuthentication }, async (request, reply) => {
+    const auth = request.auth;
+
+    if (!auth) {
+      return reply.code(401).send({ error: "The access token is invalid or the session is no longer active." });
+    }
+
+    await sessionManagement.revokeAllSessionsForUser(auth.user.id);
+    reply.clearCookie(REFRESH_TOKEN_COOKIE, getClearRefreshTokenCookieOptions(options.secureCookies));
+    return reply.code(204).send();
+  });
 }
 
 function getOAuthTransactionCookieOptions(secure: boolean) {

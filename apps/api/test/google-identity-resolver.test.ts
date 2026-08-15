@@ -1,9 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { AccountsRepository, UsersRepository } from "@auth-lab/database";
+import type { AccountsRepository, UsersRepository } from "@auth-lab/database";
 
-import { AccountLinkRequiredError } from "../src/auth/errors.js";
-import { GoogleIdentityResolver } from "../src/auth/google/google-identity-resolver.js";
+import { createGoogleIdentityResolver } from "../src/auth/google/google-identity-resolver.js";
 
 const identity = {
   providerAccountId: "google-subject-123",
@@ -12,7 +11,7 @@ const identity = {
   imageUrl: "https://example.com/avatar.png"
 };
 
-describe("GoogleIdentityResolver", () => {
+describe("createGoogleIdentityResolver", () => {
   it("returns the user already linked to a Google provider account", async () => {
     const users = {
       findByEmail: vi.fn(),
@@ -24,7 +23,7 @@ describe("GoogleIdentityResolver", () => {
       createForNewUser: vi.fn(),
       findByProviderAccount: vi.fn().mockResolvedValue({ id: "google-account-id", userId: "user-id" })
     };
-    const resolver = new GoogleIdentityResolver(
+    const resolver = createGoogleIdentityResolver(
       users as unknown as UsersRepository,
       accounts as unknown as AccountsRepository
     );
@@ -49,12 +48,12 @@ describe("GoogleIdentityResolver", () => {
       createForNewUser: vi.fn(),
       findByProviderAccount: vi.fn().mockResolvedValue(null)
     };
-    const resolver = new GoogleIdentityResolver(
+    const resolver = createGoogleIdentityResolver(
       users as unknown as UsersRepository,
       accounts as unknown as AccountsRepository
     );
 
-    await expect(resolver.resolve(identity)).rejects.toBeInstanceOf(AccountLinkRequiredError);
+    await expect(resolver.resolve(identity)).rejects.toMatchObject({ code: "ACCOUNT_LINK_REQUIRED" });
     expect(accounts.createForNewUser).not.toHaveBeenCalled();
   });
 
@@ -68,7 +67,7 @@ describe("GoogleIdentityResolver", () => {
       createForNewUser: vi.fn().mockResolvedValue({ id: "new-google-account", user: createdUser }),
       findByProviderAccount: vi.fn().mockResolvedValue(null)
     };
-    const resolver = new GoogleIdentityResolver(
+    const resolver = createGoogleIdentityResolver(
       users as unknown as UsersRepository,
       accounts as unknown as AccountsRepository
     );

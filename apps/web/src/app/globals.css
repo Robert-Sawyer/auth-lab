@@ -18,7 +18,7 @@ body {
     #08111f;
 }
 
-main {
+.centered-shell {
   display: grid;
   min-height: 100vh;
   place-items: center;
@@ -43,7 +43,7 @@ main {
   text-transform: uppercase;
 }
 
-h1 {
+.hero h1 {
   margin: 0;
   font-size: clamp(2.8rem, 10vw, 5.5rem);
   letter-spacing: -0.075em;
@@ -57,7 +57,7 @@ h1 {
   line-height: 1.65;
 }
 
-.google-button {
+.button {
   display: inline-flex;
   min-height: 3rem;
   align-items: center;
@@ -65,19 +65,49 @@ h1 {
   padding: 0.8rem 1.15rem;
   border: 1px solid #6b819b;
   border-radius: 0.75rem;
-  background: #f8fafc;
-  color: #0f172a;
+  background: #102840;
+  color: #e8f0f9;
+  cursor: pointer;
   font-weight: 700;
   text-decoration: none;
   transition: transform 150ms ease, background 150ms ease;
 }
 
-.google-button:hover {
+.button:hover:not(:disabled) {
   background: #e0f2fe;
+  color: #0f172a;
   transform: translateY(-1px);
 }
 
-.oauth-notice {
+.button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.button--google {
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.button--danger {
+  border-color: #f87171;
+  background: #7f1d1d;
+  color: #fff1f2;
+}
+
+.button--danger:hover:not(:disabled) {
+  background: #fecaca;
+  color: #7f1d1d;
+}
+
+.button--secondary {
+  min-height: 2.5rem;
+  padding: 0.55rem 0.8rem;
+  border-color: #526b88;
+  background: #17263a;
+}
+
+.notice {
   margin: 1.2rem 0 0;
   padding: 0.85rem 1rem;
   border-left: 3px solid #7dd3fc;
@@ -86,7 +116,13 @@ h1 {
   line-height: 1.5;
 }
 
-.status {
+.notice--error {
+  border-left-color: #f87171;
+  background: #3f1721;
+  color: #fecdd3;
+}
+
+.api-health {
   display: flex;
   align-items: center;
   gap: 0.9rem;
@@ -97,18 +133,18 @@ h1 {
   background: #101d2d;
 }
 
-.status p,
-.status strong {
+.api-health span,
+.api-health strong {
   display: block;
   margin: 0;
 }
 
-.status p {
+.api-health span:not(.status-dot) {
   color: #9fb1c7;
   font-size: 0.85rem;
 }
 
-.status strong {
+.api-health strong {
   margin-top: 0.18rem;
 }
 
@@ -119,12 +155,202 @@ h1 {
   border-radius: 999px;
 }
 
-.status--ready .status-dot {
+.api-health--ready .status-dot {
   background: #34d399;
   box-shadow: 0 0 0.8rem #34d399;
 }
 
-.status--waiting .status-dot {
+.api-health--waiting .status-dot {
   background: #fbbf24;
   box-shadow: 0 0 0.8rem #fbbf24;
+}
+
+.app-shell {
+  width: min(100%, 76rem);
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: 2rem;
+}
+
+.app-header,
+.sessions-heading,
+.profile-card,
+.session-row,
+.profile-details,
+.session-dates {
+  display: flex;
+}
+
+.app-header,
+.sessions-heading {
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1.5rem;
+}
+
+.app-header {
+  margin-bottom: 2rem;
+}
+
+.app-header h1,
+.profile-card h2,
+.sessions-card h2 {
+  margin: 0;
+  letter-spacing: -0.04em;
+}
+
+.app-header h1 {
+  font-size: clamp(2.25rem, 7vw, 4rem);
+}
+
+.profile-card,
+.sessions-card {
+  border: 1px solid #38516f;
+  border-radius: 1.25rem;
+  background: rgb(8 17 31 / 78%);
+  box-shadow: 0 1.5rem 4rem rgb(0 0 0 / 22%);
+}
+
+.profile-card {
+  align-items: center;
+  justify-content: space-between;
+  gap: 2rem;
+  padding: 1.5rem;
+}
+
+.profile-email,
+.sessions-heading p,
+.session-device span,
+.session-security-note {
+  color: #9fb1c7;
+}
+
+.profile-email {
+  margin: 0.55rem 0 0;
+}
+
+.profile-details,
+.session-dates {
+  flex-wrap: wrap;
+  gap: 1rem 2rem;
+  margin: 0;
+}
+
+.profile-details div,
+.session-dates div {
+  display: grid;
+  gap: 0.25rem;
+}
+
+dt {
+  color: #7d93ad;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+dd {
+  margin: 0;
+}
+
+.monospace {
+  font-family: "SFMono-Regular", Consolas, monospace;
+}
+
+.sessions-card {
+  margin-top: 1.5rem;
+  padding: 1.5rem;
+}
+
+.sessions-heading p {
+  margin: 0.45rem 0 0;
+}
+
+.sessions-list {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+}
+
+.session-row {
+  display: grid;
+  grid-template-columns: minmax(7rem, 0.7fr) minmax(12rem, 1.4fr) minmax(20rem, 2fr) auto;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid #2b405c;
+  border-radius: 0.9rem;
+  background: #101d2d;
+}
+
+.session-provider,
+.session-device {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.provider-badge,
+.current-badge {
+  width: fit-content;
+  padding: 0.25rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.provider-badge {
+  background: #173e66;
+  color: #bae6fd;
+}
+
+.current-badge {
+  background: #14532d;
+  color: #bbf7d0;
+}
+
+.session-device strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-dates {
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.session-security-note {
+  margin: 1.25rem 0 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+@media (width <= 52rem) {
+  .app-shell,
+  .centered-shell {
+    padding: 1rem;
+  }
+
+  .app-header,
+  .sessions-heading,
+  .profile-card {
+    flex-direction: column;
+  }
+
+  .app-header .api-health {
+    width: 100%;
+  }
+
+  .profile-details {
+    width: 100%;
+  }
+
+  .session-row {
+    grid-template-columns: 1fr;
+  }
+
+  .session-row .button {
+    width: 100%;
+  }
 }

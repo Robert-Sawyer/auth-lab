@@ -2,43 +2,52 @@ import type { AuthDatabase, CreateRefreshTokenInput } from "./types.js";
 
 type Clock = () => Date;
 
-export class RefreshTokensRepository {
-  public constructor(
-    private readonly database: AuthDatabase,
-    private readonly clock: Clock = () => new Date()
-  ) {}
+export function createRefreshTokensRepository(
+  database: AuthDatabase,
+  clock: Clock = () => new Date()
+) {
+  return {
+    create(input: CreateRefreshTokenInput) {
+      return database.refreshToken.create({ data: input });
+    },
 
-  public create(input: CreateRefreshTokenInput) {
-    return this.database.refreshToken.create({ data: input });
-  }
+    findByTokenHash(tokenHash: string) {
+      return database.refreshToken.findUnique({
+        where: { tokenHash },
+        include: { session: { include: { account: { include: { user: true } } } } }
+      });
+    },
 
-  public findByTokenHash(tokenHash: string) {
-    return this.database.refreshToken.findUnique({
-      where: { tokenHash },
-      include: { session: { include: { account: { include: { user: true } } } } }
-    });
-  }
+    markUsedAndReplaced(id: string, replacementTokenId: string) {
+      const now = clock();
 
-  public markUsedAndReplaced(id: string, replacementTokenId: string) {
-    const now = this.clock();
+      return database.refreshToken.updateMany({
+        where: { id, usedAt: null, revokedAt: null, expiresAt: { gt: now } },
+        data: { usedAt: now, replacedByTokenId: replacementTokenId }
+      });
+    },
 
-    return this.database.refreshToken.updateMany({
-      where: { id, usedAt: null, revokedAt: null, expiresAt: { gt: now } },
-      data: { usedAt: now, replacedByTokenId: replacementTokenId }
-    });
-  }
+    revokeFamily(familyId: string) {
+      return database.refreshToken.updateMany({
+        where: { familyId, revokedAt: null },
+        data: { revokedAt: clock() }
+      });
+    },
 
-  public revokeFamily(familyId: string) {
-    return this.database.refreshToken.updateMany({
-      where: { familyId, revokedAt: null },
-      data: { revokedAt: this.clock() }
-    });
-  }
+    revokeForSession(sessionId: string) {
+      return database.refreshToken.updateMany({
+        where: { sessionId, revokedAt: null },
+        data: { revokedAt: clock() }
+      });
+    },
 
-  public revokeForSession(sessionId: string) {
-    return this.database.refreshToken.updateMany({
-      where: { sessionId, revokedAt: null },
-      data: { revokedAt: this.clock() }
-    });
-  }
+    revokeForUser(userId: string) {
+      return database.refreshToken.updateMany({
+        where: { session: { account: { userId } }, revokedAt: null },
+        data: { revokedAt: clock() }
+      });
+    }
+  };
 }
+
+export type RefreshTokensRepository = ReturnType<typeof createRefreshTokensRepository>;

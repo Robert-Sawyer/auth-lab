@@ -1,6 +1,6 @@
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
 
-import { OAuthCallbackError } from "../errors.js";
+import { createOAuthCallbackError, isOAuthCallbackError } from "../errors.js";
 import { createPkceCodeChallenge, type GoogleOAuthTransaction } from "./transaction.js";
 
 const GOOGLE_AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -48,58 +48,60 @@ export function createGoogleAuthorizationUrl(
   return url.toString();
 }
 
-export class GoogleOidcClient {
-  public constructor(private readonly config: GoogleOAuthConfig) {}
-
-  public async completeAuthorizationCode(
-    input: CompleteGoogleAuthorizationInput
-  ): Promise<GoogleIdentity> {
-    const tokenResponse = await fetch(GOOGLE_TOKEN_ENDPOINT, {
-      method: "POST",
-      headers: {
-        accept: "application/json",
-        "content-type": "application/x-www-form-urlencoded"
-      },
-      body: new URLSearchParams({
-        client_id: this.config.clientId,
-        client_secret: this.config.clientSecret,
-        code: input.code,
-        code_verifier: input.codeVerifier,
-        grant_type: "authorization_code",
-        redirect_uri: this.config.redirectUri
-      })
-    });
-
-    if (!tokenResponse.ok) {
-      throw new OAuthCallbackError("Google rejected the authorization code.");
-    }
-
-    const tokenPayload: unknown = await tokenResponse.json();
-
-    if (!isRecord(tokenPayload) || typeof tokenPayload.id_token !== "string") {
-      throw new OAuthCallbackError("Google did not return an ID token.");
-    }
-
-    try {
-      const { payload } = await jwtVerify(tokenPayload.id_token, GOOGLE_JWKS, {
-        audience: this.config.clientId,
-        issuer: GOOGLE_ISSUERS
+export function createGoogleOidcClient(config: GoogleOAuthConfig) {
+  return {
+    async completeAuthorizationCode(
+      input: CompleteGoogleAuthorizationInput
+    ): Promise<GoogleIdentity> {
+      const tokenResponse = await fetch(GOOGLE_TOKEN_ENDPOINT, {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          "content-type": "application/x-www-form-urlencoded"
+        },
+        body: new URLSearchParams({
+          client_id: config.clientId,
+          client_secret: config.clientSecret,
+          code: input.code,
+          code_verifier: input.codeVerifier,
+          grant_type: "authorization_code",
+          redirect_uri: config.redirectUri
+        })
       });
 
-      return toGoogleIdentity(payload, input.nonce);
-    } catch (error) {
-      if (error instanceof OAuthCallbackError) {
-        throw error;
+      if (!tokenResponse.ok) {
+        throw createOAuthCallbackError("Google rejected the authorization code.");
       }
 
-      throw new OAuthCallbackError("Google returned an invalid ID token.");
+      const tokenPayload: unknown = await tokenResponse.json();
+
+      if (!isRecord(tokenPayload) || typeof tokenPayload.id_token !== "string") {
+        throw createOAuthCallbackError("Google did not return an ID token.");
+      }
+
+      try {
+        const { payload } = await jwtVerify(tokenPayload.id_token, GOOGLE_JWKS, {
+          audience: config.clientId,
+          issuer: GOOGLE_ISSUERS
+        });
+
+        return toGoogleIdentity(payload, input.nonce);
+      } catch (error) {
+        if (isOAuthCallbackError(error)) {
+          throw error;
+        }
+
+        throw createOAuthCallbackError("Google returned an invalid ID token.");
+      }
     }
-  }
+  };
 }
+
+export type GoogleOidcClient = ReturnType<typeof createGoogleOidcClient>;
 
 function toGoogleIdentity(payload: JWTPayload, expectedNonce: string): GoogleIdentity {
   if (payload.nonce !== expectedNonce) {
-    throw new OAuthCallbackError("Google ID token nonce did not match the authorization request.");
+    throw createOAuthCallbackError("Google ID token nonce did not match the authorization request.");
   }
 
   if (
@@ -107,7 +109,7 @@ function toGoogleIdentity(payload: JWTPayload, expectedNonce: string): GoogleIde
     typeof payload.email !== "string" ||
     payload.email_verified !== true
   ) {
-    throw new OAuthCallbackError("Google ID token did not contain a verified email identity.");
+    throw createOAuthCallbackError("Google ID token did not contain a verified email identity.");
   }
 
   return {

@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app.js";
+import type { CompleteGoogleAuthorizationInput } from "../src/auth/google/google-oidc-client.js";
 import { createPkceCodeChallenge, deserializeGoogleOAuthTransaction } from "../src/auth/google/transaction.js";
+import type { SessionUser } from "../src/auth/session/session-lifecycle-service.js";
+
+type CompleteGoogleSignIn = (input: CompleteGoogleAuthorizationInput) => Promise<SessionUser>;
+type CookieHeaders = Record<string, string | string[] | number | undefined>;
 
 const googleConfig = {
   clientId: "google-client-id",
@@ -18,7 +23,7 @@ describe("Google OAuth routes", () => {
   });
 
   it("starts Authorization Code Flow with state, PKCE, nonce, and a signed transaction cookie", async () => {
-    const complete = vi.fn();
+    const complete = vi.fn<CompleteGoogleSignIn>();
     const app = createGoogleTestApp(complete);
     apps.add(app);
 
@@ -50,7 +55,7 @@ describe("Google OAuth routes", () => {
   });
 
   it("accepts only the matching state and then clears the one-time transaction cookie", async () => {
-    const complete = vi.fn().mockResolvedValue(testUser);
+    const complete = vi.fn<CompleteGoogleSignIn>().mockResolvedValue(testUser);
     const app = createGoogleTestApp(complete);
     apps.add(app);
 
@@ -81,7 +86,7 @@ describe("Google OAuth routes", () => {
   });
 
   it("rejects callbacks with a mismatched state before exchanging the authorization code", async () => {
-    const complete = vi.fn();
+    const complete = vi.fn<CompleteGoogleSignIn>();
     const app = createGoogleTestApp(complete);
     apps.add(app);
 
@@ -98,7 +103,7 @@ describe("Google OAuth routes", () => {
   });
 });
 
-function createGoogleTestApp(complete: ReturnType<typeof vi.fn>) {
+function createGoogleTestApp(complete: CompleteGoogleSignIn) {
   return createApp({
     logger: false,
     oauthTransactionCookieSecret: "test-cookie-secret-that-is-long-enough-to-sign-values",
@@ -125,7 +130,7 @@ const testUser = {
   role: "USER" as const
 };
 
-function getCookieHeader(response: { headers: Record<string, string | string[] | undefined> }): string {
+function getCookieHeader(response: { headers: CookieHeaders }): string {
   const firstCookie = getCookieHeaders(response)[0];
 
   if (!firstCookie) {
@@ -135,13 +140,17 @@ function getCookieHeader(response: { headers: Record<string, string | string[] |
   return firstCookie;
 }
 
-function getCookieHeaders(response: { headers: Record<string, string | string[] | undefined> }): string[] {
+function getCookieHeaders(response: { headers: CookieHeaders }): string[] {
   const setCookie = response.headers["set-cookie"];
 
-  return typeof setCookie === "string" ? [setCookie] : (setCookie ?? []);
+  if (typeof setCookie === "string") {
+    return [setCookie];
+  }
+
+  return Array.isArray(setCookie) ? setCookie : [];
 }
 
-function getCookiePair(response: { headers: Record<string, string | string[] | undefined> }): string {
+function getCookiePair(response: { headers: CookieHeaders }): string {
   return getCookieHeader(response).split(";", 1)[0];
 }
 

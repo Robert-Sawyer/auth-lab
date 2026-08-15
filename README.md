@@ -94,9 +94,18 @@ The browser obtains an access token with a credentialed `POST /auth/refresh` req
 | --- | --- |
 | `POST /auth/refresh` | Rotate the refresh token and return `{ accessToken, tokenType, expiresIn }`. Requests with a foreign `Origin` are rejected. |
 | `POST /auth/logout` | Revoke the session represented by the current refresh cookie and clear that cookie. It is intentionally idempotent. |
-| `GET /auth/me` | Example protected route. It requires a Bearer access token and confirms that its server-side session is still active. |
+| `GET /auth/me` | Profile endpoint. It requires a Bearer access token and confirms that its server-side session is still active. |
+| `GET /sessions` | List the authenticated user's active sessions, their provider, device metadata, timestamps, expiry, and whether each is the current session. |
+| `DELETE /sessions/:id` | Revoke one active session owned by the authenticated user and its refresh tokens. Deleting the current session also clears its refresh cookie. |
+| `DELETE /sessions` | Revoke every active session and refresh token belonging to the authenticated user, then clear the current refresh cookie. |
 
 Rotation is single-use. If a used, revoked, expired, or concurrently consumed refresh token appears again, the API revokes its entire token family and the associated session. Because the authorization middleware reads the active session from PostgreSQL after validating the JWT, logout and reuse detection invalidate an already-issued access token immediately rather than waiting for its short expiry.
+
+## Profile and session management
+
+The dashboard restores a session by calling `POST /auth/refresh` once when it mounts, then keeps the returned access token only in React memory. It uses that token to load the profile and active sessions. When an API call returns `401`, it performs one refresh-and-retry cycle; it never writes an access token to `localStorage`, `sessionStorage`, or a JavaScript-readable cookie.
+
+The Sessions screen makes the server-side state visible: provider, device/user-agent, IP address, creation time, last activity, expiry, and the current-device marker. Revoking another device reloads the list. Revoking the current session or all sessions clears the local in-memory token and returns the UI to the sign-in state.
 
 ## Commands
 
@@ -133,6 +142,12 @@ The web app, API, and database package are versioned together because authentica
 Next.js is responsible for the user interface and browser-facing routes. Fastify owns OAuth callbacks, token issuance, session invalidation, and authorization middleware. Keeping provider secrets and token logic out of the frontend gives the API a clear security boundary and avoids coupling the browser to a specific OAuth provider implementation.
 
 Fastify is chosen over a heavier application framework because its plugin model, schema support, and low-overhead request lifecycle suit a small API that will progressively add authentication middleware. Next.js is not used as the OAuth backend so that API behavior remains independently testable and could later serve another client without moving security-sensitive logic.
+
+### Function factories instead of application classes
+
+The repositories, session services, Google/OIDC adapter, identity resolver, and sign-in workflow are factory functions. Each factory receives its dependencies explicitly—such as the Prisma client, a test clock, or an OAuth configuration—and returns only the operations that belong to that module. This gives the code a small, readable dependency boundary without `this`, constructors, inheritance, or mutable instance state.
+
+For example, `createSessionLifecycleService` closes over the token secrets, database client, and clock; `createSessionsRepository` closes over a Prisma delegate and clock. Tests can substitute these dependencies directly, while application wiring is a straightforward series of function calls in `server.ts`. Custom authentication errors are ordinary `Error` objects with a stable `code` property and accompanying type guards, not subclasses.
 
 ### PostgreSQL as the source of truth; Redis deferred
 
@@ -178,6 +193,12 @@ Refresh-token use runs in one Prisma transaction. The previous token is conditio
 
 This design is preferred over a single long-lived JWT because an independently revocable, rotated refresh token gives the server meaningful session control while keeping frequent API authorization lightweight. GitHub OAuth and explicit account linking remain later provider stages.
 
+### Server-scoped session management
+
+The sessions endpoints derive `userId` and the current session ID from the verified access token; the browser never submits a user ID. A selected session is revoked only through a query constrained by both its ID and the authenticated user. Refresh tokens are revoked in the same Prisma transaction only after that conditional session update succeeds, so a caller cannot invalidate another user's refresh tokens by guessing a session UUID.
+
+`DELETE /sessions` also revokes refresh tokens through the `RefreshToken -> Session -> Account -> User` relation. This makes “log out from all devices” complete even for a browser that has not used its refresh token recently.
+
 ### Environment variables and secret boundaries
 
 `.env.example` documents the required local configuration, while `.env` is ignored by Git. Database URLs, OAuth client secrets, cookie keys, and signing keys must remain server-only. In Next.js, only variables explicitly prefixed with `NEXT_PUBLIC_` may be exposed to browser code; no secret should use that prefix.
@@ -192,9 +213,9 @@ The workflow grants only `contents: read`, cancels superseded runs for the same 
 
 ### Test strategy at the current stage
 
-Repository tests use a mocked Prisma client to verify query shape and security filters quickly: for example, active-session lookups require the requesting user, and refresh-token consumption requires a token that is unused, unrevoked, and unexpired. Fastify tests cover the health endpoint, credentialed CORS configuration, OAuth transaction cookies, PKCE parameters, state mismatch rejection, callback handoff, identity-account resolution, refresh-cookie handling, and Bearer-token middleware.
+Repository tests use a mocked Prisma client to verify query shape and security filters quickly: for example, active-session lookups require the requesting user, refresh-token consumption requires a token that is unused, unrevoked, and unexpired, and all-device revocation is constrained by the owning user. Fastify tests cover the health endpoint, credentialed CORS configuration, OAuth transaction cookies, PKCE parameters, state mismatch rejection, callback handoff, identity-account resolution, refresh-cookie handling, Bearer-token middleware, and the three session-management endpoints.
 
-The session-lifecycle service is tested with a transactional in-memory Prisma-double for refresh-token rotation, old-token reuse detection, current-session logout, and immediate access-token rejection after session revocation. A later stage can add PostgreSQL integration tests and browser end-to-end tests around this same flow. This layered approach keeps feedback fast while reserving full infrastructure tests for flows that need them.
+The session-lifecycle and session-management services are tested with transactional Prisma doubles for token rotation, old-token reuse detection, current-session logout, individual-session ownership checks, and all-device revocation. The web dashboard is type-checked and production-built as part of the same quality gate. A later stage can add PostgreSQL integration tests and browser end-to-end tests around this flow.
 
 ## Continuous integration
 
@@ -204,4 +225,4 @@ To make it a merge gate, configure GitHub branch protection and require the `Qua
 
 ## Current status
 
-The application foundation, data model, repositories, initial migration, CI workflow, Google OIDC sign-in, and application-session lifecycle are in place. The next small stages will add the profile/session-management UI, GitHub OAuth, explicit account linking, and "log out from all devices".
+The application foundation, data model, repositories, initial migration, CI workflow, Google OIDC sign-in, rotating session tokens, profile dashboard, and session management are in place. The next small stages will add GitHub OAuth and explicit account linking.

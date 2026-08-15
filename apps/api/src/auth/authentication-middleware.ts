@@ -1,6 +1,6 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 
-import type { AuthenticatedSession, SessionLifecycleService } from "./session/session-lifecycle-service.js";
+import type { AuthenticatedSession, SessionLifecycle } from "./session/session-lifecycle-service.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -11,7 +11,7 @@ declare module "fastify" {
 export type AuthenticationMiddleware = (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
 
 export function createRequireAuthentication(
-  sessionLifecycle: Pick<SessionLifecycleService, "authenticateAccessToken">
+  sessionLifecycle: Pick<SessionLifecycle, "authenticateAccessToken">
 ): AuthenticationMiddleware {
   return async (request, reply) => {
     const accessToken = readBearerToken(request.headers.authorization);

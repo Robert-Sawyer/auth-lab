@@ -1,12 +1,12 @@
 import {
-  AccountsRepository,
-  UsersRepository,
+  type AccountsRepository,
+  type UsersRepository,
   type CreateUserInput,
   type OAuthProvider,
   type UserRole
 } from "@auth-lab/database";
 
-import { AccountLinkRequiredError, OAuthCallbackError } from "../errors.js";
+import { createAccountLinkRequiredError, createOAuthCallbackError } from "../errors.js";
 import type { GoogleIdentity } from "./google-oidc-client.js";
 
 const GOOGLE_PROVIDER: OAuthProvider = "GOOGLE";
@@ -19,46 +19,45 @@ export type ResolvedGoogleUser = {
   role: UserRole;
 };
 
-export class GoogleIdentityResolver {
-  public constructor(
-    private readonly users: UsersRepository,
-    private readonly accounts: AccountsRepository
-  ) {}
+export function createGoogleIdentityResolver(users: UsersRepository, accounts: AccountsRepository) {
+  return {
+    async resolve(identity: GoogleIdentity): Promise<ResolvedGoogleUser> {
+      const existingAccount = await accounts.findByProviderAccount(
+        GOOGLE_PROVIDER,
+        identity.providerAccountId
+      );
 
-  public async resolve(identity: GoogleIdentity): Promise<ResolvedGoogleUser> {
-    const existingAccount = await this.accounts.findByProviderAccount(
-      GOOGLE_PROVIDER,
-      identity.providerAccountId
-    );
+      if (existingAccount) {
+        const user = await users.findById(existingAccount.userId);
 
-    if (existingAccount) {
-      const user = await this.users.findById(existingAccount.userId);
+        if (!user) {
+          throw createOAuthCallbackError("Google account is not associated with an active user.");
+        }
 
-      if (!user) {
-        throw new OAuthCallbackError("Google account is not associated with an active user.");
+        return pickUser(user, existingAccount.id);
       }
 
-      return pickUser(user, existingAccount.id);
+      const existingUser = await users.findByEmail(identity.email);
+
+      if (existingUser) {
+        // Email equality alone is not sufficient proof that an external account may be linked.
+        throw createAccountLinkRequiredError();
+      }
+
+      const account = await accounts.createForNewUser({
+        provider: GOOGLE_PROVIDER,
+        providerAccountId: identity.providerAccountId,
+        providerEmail: identity.email,
+        providerEmailVerified: true,
+        user: createUserInput(identity)
+      });
+
+      return pickUser(account.user, account.id);
     }
-
-    const existingUser = await this.users.findByEmail(identity.email);
-
-    if (existingUser) {
-      // Email equality alone is not sufficient proof that an external account may be linked.
-      throw new AccountLinkRequiredError();
-    }
-
-    const account = await this.accounts.createForNewUser({
-      provider: GOOGLE_PROVIDER,
-      providerAccountId: identity.providerAccountId,
-      providerEmail: identity.email,
-      providerEmailVerified: true,
-      user: createUserInput(identity)
-    });
-
-    return pickUser(account.user, account.id);
-  }
+  };
 }
+
+export type GoogleIdentityResolver = ReturnType<typeof createGoogleIdentityResolver>;
 
 function createUserInput(identity: GoogleIdentity): CreateUserInput {
   return {
