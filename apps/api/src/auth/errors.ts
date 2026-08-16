@@ -5,18 +5,18 @@ type AuthErrorCode =
 
 type AuthError<Code extends AuthErrorCode> = Error & { code: Code };
 
-export function createOAuthConfigurationError(): AuthError<"OAUTH_CONFIGURATION_MISSING"> {
-  return createAuthError("OAUTH_CONFIGURATION_MISSING", "Google OAuth is not configured.");
+export function createOAuthConfigurationError(provider = "OAuth"): AuthError<"OAUTH_CONFIGURATION_MISSING"> {
+  return createAuthError("OAUTH_CONFIGURATION_MISSING", `${provider} is not configured.`);
 }
 
 export function createOAuthCallbackError(message: string): AuthError<"OAUTH_CALLBACK_FAILED"> {
   return createAuthError("OAUTH_CALLBACK_FAILED", message);
 }
 
-export function createAccountLinkRequiredError(): AuthError<"ACCOUNT_LINK_REQUIRED"> {
+export function createAccountLinkRequiredError(provider: string): AuthError<"ACCOUNT_LINK_REQUIRED"> {
   return createAuthError(
     "ACCOUNT_LINK_REQUIRED",
-    "This email belongs to an existing account that is not linked to Google."
+    `This email belongs to an existing account that is not linked to ${provider}.`
   );
 }
 

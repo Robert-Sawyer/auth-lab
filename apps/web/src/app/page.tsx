@@ -36,12 +36,36 @@ function getOAuthStatusMessage(oauth: string | string[] | undefined) {
     return "Google sign-in was cancelled.";
   }
 
-  if (oauth === "account-link-required") {
+  if (oauth === "google-link-required") {
     return "This email already belongs to an account. Sign in first, then link Google from your profile.";
   }
 
   if (oauth === "google-failed") {
     return "Google sign-in could not be completed. Please start again.";
+  }
+
+  if (oauth === "github-complete") {
+    return "GitHub identity verified and a browser session was started. The app can now exchange its refresh cookie for a short-lived access token.";
+  }
+
+  if (oauth === "github-denied") {
+    return "GitHub sign-in was cancelled.";
+  }
+
+  if (oauth === "github-linked") {
+    return "GitHub was linked to this account. You can now sign in with either provider.";
+  }
+
+  if (oauth === "github-link-denied") {
+    return "GitHub account linking was cancelled.";
+  }
+
+  if (oauth === "github-link-required") {
+    return "This email already belongs to an account. Sign in first, then link GitHub from your profile.";
+  }
+
+  if (oauth === "github-failed" || oauth === "github-link-failed") {
+    return "GitHub verification could not be completed. Please start again.";
   }
 
   return null;

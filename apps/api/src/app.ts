@@ -21,6 +21,18 @@ import {
   serializeGoogleOAuthTransaction
 } from "./auth/google/transaction.js";
 import {
+  createGitHubAuthorizationUrl,
+  type CompleteGitHubAuthorizationInput,
+  type GitHubOAuthConfig
+} from "./auth/github/github-oauth-client.js";
+import {
+  createGitHubOAuthTransaction,
+  deserializeGitHubOAuthTransaction,
+  isValidGitHubOAuthCallback,
+  serializeGitHubOAuthTransaction
+} from "./auth/github/transaction.js";
+import { type OAuthIdentityService } from "./auth/oauth-identity-service.js";
+import {
   getClearRefreshTokenCookieOptions,
   getRefreshTokenCookieOptions,
   REFRESH_TOKEN_COOKIE
@@ -35,10 +47,16 @@ import { type SessionManagement } from "./auth/session/session-management-servic
 import { getConfig } from "./config.js";
 
 const GOOGLE_OAUTH_TRANSACTION_COOKIE = "oauth_google_transaction";
+const GITHUB_OAUTH_TRANSACTION_COOKIE = "oauth_github_transaction";
 const OAUTH_TRANSACTION_COOKIE_MAX_AGE_SECONDS = 10 * 60;
 
 type GoogleSignIn = {
   complete(input: CompleteGoogleAuthorizationInput): Promise<SessionUser>;
+};
+
+type GitHubSignIn = {
+  complete(input: CompleteGitHubAuthorizationInput): Promise<SessionUser>;
+  link(userId: string, input: CompleteGitHubAuthorizationInput): Promise<SessionUser>;
 };
 
 type SessionAuth = Pick<
@@ -51,8 +69,13 @@ type SessionManager = Pick<
   "listActiveSessions" | "revokeAllSessionsForUser" | "revokeSessionForUser"
 >;
 
+type AccountLinking = Pick<OAuthIdentityService, "listLinkedAccounts">;
+
 type CreateAppOptions = {
+  accountLinking?: AccountLinking;
+  completeGitHubSignIn?: GitHubSignIn;
   completeGoogleSignIn?: GoogleSignIn;
+  getGitHubOAuthConfig?: () => GitHubOAuthConfig;
   getGoogleOAuthConfig?: () => GoogleOAuthConfig;
   logger?: boolean;
   oauthTransactionCookieSecret?: string;
@@ -68,6 +91,7 @@ export function createApp(options: CreateAppOptions = {}) {
   const webOrigin = options.webOrigin ?? config.webOrigin;
   const cookieSecret = options.oauthTransactionCookieSecret ?? config.oauthTransactionCookieSecret;
   const secureCookies = options.secureCookies ?? config.isProduction;
+  const getGitHubOAuthConfig = options.getGitHubOAuthConfig ?? config.getGitHubOAuthConfig;
   const getGoogleOAuthConfig = options.getGoogleOAuthConfig ?? config.getGoogleOAuthConfig;
 
   app.register(cookie, { secret: cookieSecret });
@@ -105,7 +129,15 @@ export function createApp(options: CreateAppOptions = {}) {
     sessionLifecycle: options.sessionLifecycle,
     webOrigin
   });
+  registerGitHubAuthRoutes(app, {
+    completeGitHubSignIn: options.completeGitHubSignIn,
+    getGitHubOAuthConfig,
+    secureCookies,
+    sessionLifecycle: options.sessionLifecycle,
+    webOrigin
+  });
   registerSessionAuthRoutes(app, {
+    accountLinking: options.accountLinking,
     secureCookies,
     sessionLifecycle: options.sessionLifecycle,
     sessionManagement: options.sessionManagement,
@@ -136,7 +168,7 @@ function registerGoogleAuthRoutes(app: FastifyInstance, options: GoogleAuthRoute
     reply.setCookie(
       GOOGLE_OAUTH_TRANSACTION_COOKIE,
       serializeGoogleOAuthTransaction(transaction),
-      getOAuthTransactionCookieOptions(options.secureCookies)
+      getOAuthTransactionCookieOptions(options.secureCookies, "/auth/google")
     );
 
     return reply.redirect(createGoogleAuthorizationUrl(auth.config, transaction));
@@ -202,7 +234,7 @@ function registerGoogleAuthRoutes(app: FastifyInstance, options: GoogleAuthRoute
       return reply.redirect(createWebOAuthResultUrl(options.webOrigin, "google-complete"));
     } catch (error) {
       if (isAccountLinkRequiredError(error)) {
-        return reply.redirect(createWebOAuthResultUrl(options.webOrigin, "account-link-required"));
+        return reply.redirect(createWebOAuthResultUrl(options.webOrigin, "google-link-required"));
       }
 
       if (isOAuthCallbackError(error)) {
@@ -235,7 +267,175 @@ function getGoogleAuthDependencies(options: GoogleAuthRoutesOptions) {
   }
 }
 
+type GitHubAuthRoutesOptions = {
+  completeGitHubSignIn?: GitHubSignIn;
+  getGitHubOAuthConfig: () => GitHubOAuthConfig;
+  secureCookies: boolean;
+  sessionLifecycle?: SessionAuth;
+  webOrigin: string;
+};
+
+function registerGitHubAuthRoutes(app: FastifyInstance, options: GitHubAuthRoutesOptions) {
+  app.get("/auth/github", async (_request, reply) => {
+    const auth = getGitHubAuthDependencies(options);
+
+    if (!auth) {
+      return reply.code(503).send({ error: "GitHub sign-in is not configured." });
+    }
+
+    const transaction = createGitHubOAuthTransaction();
+
+    reply.setCookie(
+      GITHUB_OAUTH_TRANSACTION_COOKIE,
+      serializeGitHubOAuthTransaction(transaction),
+      getOAuthTransactionCookieOptions(options.secureCookies, "/auth/github")
+    );
+
+    return reply.redirect(createGitHubAuthorizationUrl(auth.config, transaction));
+  });
+
+  if (!options.sessionLifecycle) {
+    app.post("/auth/github/link", async (_request, reply) => {
+      return reply.code(503).send({ error: "Session storage is not configured." });
+    });
+  } else {
+    const requireAuthentication = createRequireAuthentication(options.sessionLifecycle);
+
+    app.post("/auth/github/link", { preHandler: requireAuthentication }, async (request, reply) => {
+      const auth = getGitHubAuthDependencies(options);
+
+      if (!auth) {
+        return reply.code(503).send({ error: "GitHub sign-in is not configured." });
+      }
+
+      if (!hasTrustedOrigin(request, options.webOrigin)) {
+        return reply.code(403).send({ error: "The request origin is not allowed." });
+      }
+
+      if (!request.auth) {
+        return reply.code(401).send({ error: "The access token is invalid or the session is no longer active." });
+      }
+
+      const transaction = createGitHubOAuthTransaction({ userId: request.auth.user.id });
+
+      reply.setCookie(
+        GITHUB_OAUTH_TRANSACTION_COOKIE,
+        serializeGitHubOAuthTransaction(transaction),
+        getOAuthTransactionCookieOptions(options.secureCookies, "/auth/github")
+      );
+
+      return { authorizationUrl: createGitHubAuthorizationUrl(auth.config, transaction) };
+    });
+  }
+
+  app.get<{
+    Querystring: { code?: string; error?: string; state?: string };
+  }>("/auth/github/callback", async (request, reply) => {
+    const auth = getGitHubAuthDependencies(options);
+
+    if (!auth) {
+      return reply.code(503).send({ error: "GitHub sign-in is not configured." });
+    }
+
+    const transaction = readGitHubOAuthTransaction(
+      request.cookies[GITHUB_OAUTH_TRANSACTION_COOKIE],
+      reply
+    );
+
+    reply.clearCookie(GITHUB_OAUTH_TRANSACTION_COOKIE, {
+      httpOnly: true,
+      path: "/auth/github",
+      sameSite: "lax",
+      secure: options.secureCookies
+    });
+
+    if (request.query.error) {
+      return reply.redirect(
+        createWebOAuthResultUrl(
+          options.webOrigin,
+          transaction?.intent === "link" ? "github-link-denied" : "github-denied"
+        )
+      );
+    }
+
+    if (typeof request.query.code !== "string" || typeof request.query.state !== "string") {
+      return reply.code(400).send({ error: "GitHub OAuth callback is missing required parameters." });
+    }
+
+    if (!transaction || !isValidGitHubOAuthCallback(transaction, request.query.state)) {
+      return reply.code(400).send({ error: "GitHub OAuth state validation failed." });
+    }
+
+    try {
+      const authorization = { code: request.query.code, codeVerifier: transaction.codeVerifier };
+
+      if (transaction.intent === "link") {
+        await auth.completeGitHubSignIn.link(transaction.userId, authorization);
+        return reply.redirect(createWebOAuthResultUrl(options.webOrigin, "github-linked"));
+      }
+
+      if (!options.sessionLifecycle) {
+        return reply.code(503).send({ error: "Session storage is not configured." });
+      }
+
+      const user = await auth.completeGitHubSignIn.complete(authorization);
+      const session = await options.sessionLifecycle.createSession(user, {
+        ipAddress: request.ip,
+        userAgent: readUserAgent(request)
+      });
+
+      reply.setCookie(
+        REFRESH_TOKEN_COOKIE,
+        session.refreshToken,
+        getRefreshTokenCookieOptions({
+          maxAge: getRemainingLifetimeInSeconds(session.expiresAt),
+          secure: options.secureCookies
+        })
+      );
+
+      return reply.redirect(createWebOAuthResultUrl(options.webOrigin, "github-complete"));
+    } catch (error) {
+      if (isAccountLinkRequiredError(error)) {
+        return reply.redirect(createWebOAuthResultUrl(options.webOrigin, "github-link-required"));
+      }
+
+      if (isOAuthCallbackError(error)) {
+        request.log.warn({ error: error.message }, "GitHub OAuth callback rejected");
+      } else {
+        request.log.error(error, "GitHub OAuth callback failed");
+      }
+
+      return reply.redirect(
+        createWebOAuthResultUrl(
+          options.webOrigin,
+          transaction.intent === "link" ? "github-link-failed" : "github-failed"
+        )
+      );
+    }
+  });
+}
+
+function getGitHubAuthDependencies(options: GitHubAuthRoutesOptions) {
+  try {
+    if (!options.completeGitHubSignIn) {
+      throw createOAuthConfigurationError("GitHub");
+    }
+
+    return {
+      config: options.getGitHubOAuthConfig(),
+      completeGitHubSignIn: options.completeGitHubSignIn
+    };
+  } catch (error) {
+    if (isOAuthConfigurationError(error)) {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
 type SessionAuthRoutesOptions = {
+  accountLinking?: AccountLinking;
   secureCookies: boolean;
   sessionLifecycle?: SessionAuth;
   sessionManagement?: SessionManager;
@@ -251,6 +451,9 @@ function registerSessionAuthRoutes(app: FastifyInstance, options: SessionAuthRou
       return reply.code(503).send({ error: "Session storage is not configured." });
     });
     app.get("/auth/me", async (_request, reply) => {
+      return reply.code(503).send({ error: "Session storage is not configured." });
+    });
+    app.get("/accounts", async (_request, reply) => {
       return reply.code(503).send({ error: "Session storage is not configured." });
     });
     return;
@@ -302,6 +505,18 @@ function registerSessionAuthRoutes(app: FastifyInstance, options: SessionAuthRou
       return toAuthMeResponse(request.auth);
     }
   );
+
+  app.get("/accounts", { preHandler: requireAuthentication }, async (request, reply) => {
+    if (!request.auth) {
+      return reply.code(401).send({ error: "The access token is invalid or the session is no longer active." });
+    }
+
+    if (!options.accountLinking) {
+      return reply.code(503).send({ error: "Account linking is not configured." });
+    }
+
+    return { accounts: await options.accountLinking.listLinkedAccounts(request.auth.user.id) };
+  });
 
   registerSessionManagementRoutes(app, {
     requireAuthentication,
@@ -384,11 +599,11 @@ function registerSessionManagementRoutes(
   });
 }
 
-function getOAuthTransactionCookieOptions(secure: boolean) {
+function getOAuthTransactionCookieOptions(secure: boolean, path: string) {
   return {
     httpOnly: true,
     maxAge: OAUTH_TRANSACTION_COOKIE_MAX_AGE_SECONDS,
-    path: "/auth/google",
+    path,
     sameSite: "lax" as const,
     secure,
     signed: true
@@ -407,6 +622,20 @@ function readGoogleOAuthTransaction(cookieValue: string | undefined, reply: Fast
   }
 
   return deserializeGoogleOAuthTransaction(unsignedCookie.value);
+}
+
+function readGitHubOAuthTransaction(cookieValue: string | undefined, reply: FastifyReply) {
+  if (!cookieValue) {
+    return null;
+  }
+
+  const unsignedCookie = reply.unsignCookie(cookieValue);
+
+  if (!unsignedCookie.valid) {
+    return null;
+  }
+
+  return deserializeGitHubOAuthTransaction(unsignedCookie.value);
 }
 
 function createWebOAuthResultUrl(webOrigin: string, status: string): string {

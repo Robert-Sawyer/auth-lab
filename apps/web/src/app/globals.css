@@ -89,6 +89,18 @@ body {
   color: #0f172a;
 }
 
+.button--github {
+  border-color: #64748b;
+  background: #1e293b;
+  color: #f8fafc;
+}
+
+.sign-in-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
 .button--danger {
   border-color: #f87171;
   background: #7f1d1d;
@@ -194,6 +206,7 @@ body {
 
 .app-header h1,
 .profile-card h2,
+.connections-card h2,
 .sessions-card h2 {
   margin: 0;
   letter-spacing: -0.04em;
@@ -204,6 +217,7 @@ body {
 }
 
 .profile-card,
+.connections-card,
 .sessions-card {
   border: 1px solid #38516f;
   border-radius: 1.25rem;
@@ -216,6 +230,50 @@ body {
   justify-content: space-between;
   gap: 2rem;
   padding: 1.5rem;
+}
+
+.connections-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2rem;
+  margin-top: 1.5rem;
+  padding: 1.5rem;
+}
+
+.connections-card p:not(.eyebrow) {
+  margin: 0.45rem 0 0;
+  color: #9fb1c7;
+}
+
+.connections-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 1rem;
+}
+
+.connections-list {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.connections-list li {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  color: #dce7f3;
+  font-size: 0.9rem;
+}
+
+.connection-status {
+  color: #86efac;
+  font-size: 0.78rem;
+  font-weight: 700;
 }
 
 .profile-email,
@@ -334,7 +392,9 @@ dd {
 
   .app-header,
   .sessions-heading,
-  .profile-card {
+  .profile-card,
+  .connections-card,
+  .connections-actions {
     flex-direction: column;
   }
 
@@ -344,6 +404,15 @@ dd {
 
   .profile-details {
     width: 100%;
+  }
+
+  .connections-actions {
+    width: 100%;
+    align-items: stretch;
+  }
+
+  .connections-list li {
+    justify-content: flex-start;
   }
 
   .session-row {
