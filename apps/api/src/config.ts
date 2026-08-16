@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { config } from "dotenv";
 
 import { createOAuthConfigurationError } from "./auth/errors.js";
+import type { GitHubOAuthConfig } from "./auth/github/github-oauth-client.js";
 import type { GoogleOAuthConfig } from "./auth/google/google-oidc-client.js";
 
 config({
@@ -62,8 +63,21 @@ export function getConfig() {
       process.env.SESSION_TTL_DAYS,
       DEFAULT_SESSION_TTL_DAYS
     ),
+    getGitHubOAuthConfig: readGitHubOAuthConfig,
     getGoogleOAuthConfig: readGoogleOAuthConfig
   };
+}
+
+function readGitHubOAuthConfig(): GitHubOAuthConfig {
+  const clientId = process.env.GITHUB_CLIENT_ID;
+  const clientSecret = process.env.GITHUB_CLIENT_SECRET;
+  const redirectUri = process.env.GITHUB_REDIRECT_URI;
+
+  if (!isConfiguredValue(clientId) || !isConfiguredValue(clientSecret) || !isConfiguredValue(redirectUri)) {
+    throw createOAuthConfigurationError("GitHub OAuth");
+  }
+
+  return { clientId, clientSecret, redirectUri };
 }
 
 function readGoogleOAuthConfig(): GoogleOAuthConfig {
@@ -72,7 +86,7 @@ function readGoogleOAuthConfig(): GoogleOAuthConfig {
   const redirectUri = process.env.GOOGLE_REDIRECT_URI;
 
   if (!isConfiguredValue(clientId) || !isConfiguredValue(clientSecret) || !isConfiguredValue(redirectUri)) {
-    throw createOAuthConfigurationError();
+    throw createOAuthConfigurationError("Google OAuth");
   }
 
   return { clientId, clientSecret, redirectUri };

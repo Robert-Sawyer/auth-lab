@@ -84,9 +84,17 @@ In development, a missing cookie secret is replaced with an in-memory random val
 
 Google requires an exact redirect URI match, and permits `localhost` HTTP callbacks for local development. Production callbacks must use HTTPS. See the [Google web-server OAuth guide](https://developers.google.com/identity/protocols/oauth2/web-server) and its [redirect URI rules](https://developers.google.com/identity/protocols/oauth2/web-server#redirect-uri_validation-rules).
 
+## GitHub OAuth setup
+
+1. Create an **OAuth App** in GitHub account settings.
+2. Set its Authorization callback URL to the exact value of `GITHUB_REDIRECT_URI`. The local default is `http://localhost:3001/auth/github/callback`.
+3. Replace the placeholder values for `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` in `.env`.
+
+The application requests `read:user user:email`, then reads the authenticated user's profile and requires a verified primary email from GitHub's `/user/emails` endpoint. It does not request repository or organization access. GitHub's [OAuth web application flow](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps) supports `state` and PKCE with `S256`; the [email endpoint](https://docs.github.com/en/rest/users/emails) requires `user:email`.
+
 ## Application-session lifecycle
 
-After the Google callback has verified the OIDC identity, the API creates one `Session` and one refresh-token record. It stores a random refresh token only in an `httpOnly`, `SameSite=Lax`, `/auth` cookie; PostgreSQL receives only an HMAC hash of that secret. The callback redirects without putting a token in the URL.
+After a Google or GitHub callback has verified the provider identity, the API creates one `Session` and one refresh-token record. It stores a random refresh token only in an `httpOnly`, `SameSite=Lax`, `/auth` cookie; PostgreSQL receives only an HMAC hash of that secret. The callback redirects without putting a token in the URL.
 
 The browser obtains an access token with a credentialed `POST /auth/refresh` request. A successful call returns a short-lived JWT in JSON and replaces the refresh cookie with a new random value. The frontend should keep that access token in memory and send it as `Authorization: Bearer <token>`; it must not persist it in local storage or a JavaScript-readable cookie.
 
@@ -95,6 +103,8 @@ The browser obtains an access token with a credentialed `POST /auth/refresh` req
 | `POST /auth/refresh` | Rotate the refresh token and return `{ accessToken, tokenType, expiresIn }`. Requests with a foreign `Origin` are rejected. |
 | `POST /auth/logout` | Revoke the session represented by the current refresh cookie and clear that cookie. It is intentionally idempotent. |
 | `GET /auth/me` | Profile endpoint. It requires a Bearer access token and confirms that its server-side session is still active. |
+| `GET /accounts` | List provider accounts explicitly linked to the authenticated user. |
+| `POST /auth/github/link` | Require a Bearer access token and trusted `Origin`, then return a GitHub authorization URL while storing a signed one-time linking transaction cookie. |
 | `GET /sessions` | List the authenticated user's active sessions, their provider, device metadata, timestamps, expiry, and whether each is the current session. |
 | `DELETE /sessions/:id` | Revoke one active session owned by the authenticated user and its refresh tokens. Deleting the current session also clears its refresh cookie. |
 | `DELETE /sessions` | Revoke every active session and refresh token belonging to the authenticated user, then clear the current refresh cookie. |
@@ -103,9 +113,9 @@ Rotation is single-use. If a used, revoked, expired, or concurrently consumed re
 
 ## Profile and session management
 
-The dashboard restores a session by calling `POST /auth/refresh` once when it mounts, then keeps the returned access token only in React memory. It uses that token to load the profile and active sessions. When an API call returns `401`, it performs one refresh-and-retry cycle; it never writes an access token to `localStorage`, `sessionStorage`, or a JavaScript-readable cookie.
+The dashboard restores a session by calling `POST /auth/refresh` once when it mounts, then keeps the returned access token only in React memory. It uses that token to load the profile, linked accounts, and active sessions. When an API call returns `401`, it performs one refresh-and-retry cycle; it never writes an access token to `localStorage`, `sessionStorage`, or a JavaScript-readable cookie.
 
-The Sessions screen makes the server-side state visible: provider, device/user-agent, IP address, creation time, last activity, expiry, and the current-device marker. Revoking another device reloads the list. Revoking the current session or all sessions clears the local in-memory token and returns the UI to the sign-in state.
+The dashboard also displays connected providers. Selecting **Connect GitHub** starts the linking flow with the in-memory access token; the signed callback transaction carries the server-derived user ID and can only add GitHub to that user. The Sessions screen makes the server-side state visible: provider, device/user-agent, IP address, creation time, last activity, expiry, and the current-device marker. Revoking another device reloads the list. Revoking the current session or all sessions clears the local in-memory token and returns the UI to the sign-in state.
 
 ## Commands
 
@@ -179,9 +189,17 @@ The API sends the original verifier only to Google's token endpoint. It then ver
 
 After the identity is resolved, the callback creates a local application session, writes only its opaque refresh token to a secure cookie, and redirects to the UI with a non-sensitive status. It intentionally does not expose an access token in the redirect URL; access tokens are issued later through the cookie-backed refresh endpoint.
 
-### Account creation and future account linking
+### GitHub OAuth Authorization Code Flow with PKCE
 
-On first Google sign-in, the application creates the `User` and `Account` in one nested Prisma write. If the Google `sub` already has an account, it finds that account's user. If a different local identity already owns the same email, the flow refuses to link it automatically. Email equality alone is not proof that the same person controls both accounts; explicit linking while authenticated will be added with GitHub support.
+GitHub OAuth is also backend-owned and uses a separate signed, `httpOnly`, `SameSite=Lax` cookie restricted to `/auth/github`. Each transaction contains a fresh `state` and PKCE verifier and expires after ten minutes. GitHub's token response is exchanged only by Fastify; its temporary provider access token is used to request `/user` and `/user/emails`, then discarded. The application requires GitHub's stable numeric user ID and a verified primary email before writing anything to PostgreSQL.
+
+GitHub is OAuth 2.0 rather than OIDC in this implementation, so there is no provider-signed ID token or OIDC nonce to validate. Instead, the server validates the authorization response with `state` and PKCE, uses the provider access token only over HTTPS with GitHub's REST API, and requires the provider's verified-email data before resolving the local identity.
+
+### Explicit account linking instead of email-based merging
+
+On first Google or GitHub sign-in, the application creates the `User` and `Account` in one nested Prisma write. If the provider account already exists, it retrieves that account's user. If a different local identity already owns the returned email, sign-in stops with an account-link-required result; email equality alone is not proof that the same person controls both accounts.
+
+To link GitHub, an already authenticated browser calls `POST /auth/github/link` with its short-lived access token. The API verifies the token and trusted origin, then places that authenticated user ID in a signed, one-time transaction cookie. The GitHub callback uses that value only after validating `state` and PKCE. It either links the verified GitHub identity to the same user, succeeds idempotently when it is already linked there, or rejects it when the GitHub account belongs to another user. No `userId` is accepted from a query string or form body.
 
 ### Session tokens and immediate revocation
 
@@ -191,7 +209,7 @@ The refresh token is an independent 48-byte random secret and is never stored in
 
 Refresh-token use runs in one Prisma transaction. The previous token is conditionally consumed before its replacement is created, so concurrent use cannot produce two valid descendants. A failed conditional update is treated as reuse: the service revokes the token family and its session. Authorization validates both the JWT and the current session row, making logout and refresh-token-reuse invalidation effective immediately even before a JWT expires.
 
-This design is preferred over a single long-lived JWT because an independently revocable, rotated refresh token gives the server meaningful session control while keeping frequent API authorization lightweight. GitHub OAuth and explicit account linking remain later provider stages.
+This design is preferred over a single long-lived JWT because an independently revocable, rotated refresh token gives the server meaningful session control while keeping frequent API authorization lightweight.
 
 ### Server-scoped session management
 
@@ -225,4 +243,4 @@ To make it a merge gate, configure GitHub branch protection and require the `Qua
 
 ## Current status
 
-The application foundation, data model, repositories, initial migration, CI workflow, Google OIDC sign-in, rotating session tokens, profile dashboard, and session management are in place. The next small stages will add GitHub OAuth and explicit account linking.
+The application foundation, data model, repositories, initial migration, CI workflow, Google OIDC sign-in, GitHub OAuth sign-in, explicit GitHub account linking, rotating session tokens, profile dashboard, and session management are in place.

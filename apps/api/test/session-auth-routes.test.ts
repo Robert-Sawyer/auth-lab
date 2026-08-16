@@ -67,6 +67,23 @@ describe("application-session routes", () => {
     expect(sessionLifecycle.authenticateAccessToken).toHaveBeenCalledWith("short-lived-access-token");
   });
 
+  it("lists provider accounts only for the authenticated user", async () => {
+    const sessionLifecycle = createSessionLifecycle();
+    const accountLinking = createAccountLinking();
+    const app = createSessionTestApp(sessionLifecycle, false, undefined, accountLinking);
+    apps.add(app);
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/accounts",
+      headers: { authorization: "Bearer short-lived-access-token" }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ accounts: accountLinking.accounts });
+    expect(accountLinking.listLinkedAccounts).toHaveBeenCalledWith("user-1");
+  });
+
   it("logs out the current refresh-token session and clears its cookie", async () => {
     const sessionLifecycle = createSessionLifecycle();
     const app = createSessionTestApp(sessionLifecycle);
@@ -144,9 +161,11 @@ describe("application-session routes", () => {
 function createSessionTestApp(
   sessionLifecycle: ReturnType<typeof createSessionLifecycle>,
   secureCookies = false,
-  sessionManagement?: ReturnType<typeof createSessionManagement>
+  sessionManagement?: ReturnType<typeof createSessionManagement>,
+  accountLinking?: ReturnType<typeof createAccountLinking>
 ) {
   return createApp({
+    accountLinking: accountLinking as never,
     logger: false,
     secureCookies,
     sessionLifecycle: sessionLifecycle as never,
@@ -193,5 +212,21 @@ function createSessionManagement() {
     revokeAllSessionsForUser: vi.fn().mockResolvedValue(1),
     revokeSessionForUser: vi.fn().mockResolvedValue(true),
     sessions
+  };
+}
+
+function createAccountLinking() {
+  const accounts = [
+    {
+      createdAt: future.toISOString(),
+      provider: "GOOGLE",
+      providerEmail: "person@example.com",
+      providerEmailVerified: true
+    }
+  ];
+
+  return {
+    accounts,
+    listLinkedAccounts: vi.fn().mockResolvedValue(accounts)
   };
 }

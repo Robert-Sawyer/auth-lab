@@ -18,6 +18,13 @@ type Session = {
   userAgent: string | null;
 };
 
+type LinkedAccount = {
+  createdAt: string;
+  provider: string;
+  providerEmail: string | null;
+  providerEmailVerified: boolean;
+};
+
 type SessionDashboardProps = {
   apiHealth: { service: string; status: string } | null;
   apiUrl: string;
@@ -27,7 +34,13 @@ type SessionDashboardProps = {
 type DashboardState =
   | { kind: "loading" }
   | { kind: "signed-out"; notice: string | null }
-  | { kind: "ready"; notice: string | null; profile: Profile; sessions: Session[] }
+  | {
+      accounts: LinkedAccount[];
+      kind: "ready";
+      notice: string | null;
+      profile: Profile;
+      sessions: Session[];
+    }
   | { kind: "error"; message: string };
 
 export function SessionDashboard({ apiHealth, apiUrl, oauthNotice }: SessionDashboardProps) {
@@ -92,22 +105,31 @@ export function SessionDashboard({ apiHealth, apiUrl, oauthNotice }: SessionDash
         return;
       }
 
-      const [profileResponse, sessionsResponse] = await Promise.all([
+      const [profileResponse, sessionsResponse, accountsResponse] = await Promise.all([
         authenticatedFetch("/auth/me"),
-        authenticatedFetch("/sessions")
+        authenticatedFetch("/sessions"),
+        authenticatedFetch("/accounts")
       ]);
 
-      if (!profileResponse || !sessionsResponse) {
+      if (!profileResponse || !sessionsResponse || !accountsResponse) {
         setState({ kind: "signed-out", notice: "Your session expired. Please sign in again." });
         return;
       }
 
       ensureSuccessfulResponse(profileResponse, "The API could not load your profile.");
       ensureSuccessfulResponse(sessionsResponse, "The API could not load your sessions.");
+      ensureSuccessfulResponse(accountsResponse, "The API could not load your connected accounts.");
 
       const profile = (await profileResponse.json()) as Profile;
       const sessionsPayload = (await sessionsResponse.json()) as { sessions: Session[] };
-      setState({ kind: "ready", notice: oauthNotice, profile, sessions: sessionsPayload.sessions });
+      const accountsPayload = (await accountsResponse.json()) as { accounts: LinkedAccount[] };
+      setState({
+        accounts: accountsPayload.accounts,
+        kind: "ready",
+        notice: oauthNotice,
+        profile,
+        sessions: sessionsPayload.sessions
+      });
     } catch (error) {
       setState({ kind: "error", message: getErrorMessage(error) });
     }
@@ -173,6 +195,28 @@ export function SessionDashboard({ apiHealth, apiUrl, oauthNotice }: SessionDash
     }
   }
 
+  async function linkGitHubAccount() {
+    setBusyAction("github-link");
+
+    try {
+      const response = await authenticatedFetch("/auth/github/link", { method: "POST" });
+
+      if (!response) {
+        setState({ kind: "signed-out", notice: "Your session expired. Please sign in again." });
+        return;
+      }
+
+      ensureSuccessfulResponse(response, "The API could not start GitHub account linking.");
+
+      const { authorizationUrl } = (await response.json()) as { authorizationUrl: string };
+      window.location.assign(authorizationUrl);
+    } catch (error) {
+      setState({ kind: "error", message: getErrorMessage(error) });
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
   if (state.kind === "loading") {
     return <LoadingPanel apiHealth={apiHealth} />;
   }
@@ -217,6 +261,39 @@ export function SessionDashboard({ apiHealth, apiUrl, oauthNotice }: SessionDash
             <dd>{formatDate(state.profile.session.expiresAt)}</dd>
           </div>
         </dl>
+      </section>
+
+      <section className="connections-card" aria-labelledby="connections-heading">
+        <div>
+          <p className="eyebrow">Connected accounts</p>
+          <h2 id="connections-heading">Sign-in methods</h2>
+          <p>Link another verified provider identity without creating a second user.</p>
+        </div>
+        <div className="connections-actions">
+          <ul className="connections-list">
+            {state.accounts.map((account) => (
+              <li key={account.provider}>
+                <span className="provider-badge">{formatProvider(account.provider)}</span>
+                <span>{account.providerEmail ?? "Email unavailable"}</span>
+                <span className="connection-status">
+                  {account.providerEmailVerified ? "Verified" : "Unverified"}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <button
+            className="button button--github"
+            disabled={busyAction !== null || hasProvider(state.accounts, "GITHUB")}
+            onClick={() => void linkGitHubAccount()}
+            type="button"
+          >
+            {hasProvider(state.accounts, "GITHUB")
+              ? "GitHub connected"
+              : busyAction === "github-link"
+                ? "Opening GitHub…"
+                : "Connect GitHub"}
+          </button>
+        </div>
       </section>
 
       <section className="sessions-card" aria-labelledby="sessions-heading">
@@ -304,9 +381,14 @@ function SignedOutPanel({
           Inspect how OAuth, token rotation, and session controls work together—one deliberately
           small step at a time.
         </p>
-        <a className="button button--google" href={`${apiUrl}/auth/google`}>
-          Continue with Google
-        </a>
+        <div className="sign-in-actions">
+          <a className="button button--google" href={`${apiUrl}/auth/google`}>
+            Continue with Google
+          </a>
+          <a className="button button--github" href={`${apiUrl}/auth/github`}>
+            Continue with GitHub
+          </a>
+        </div>
         {notice ? <p className="notice">{notice}</p> : null}
         <ApiHealth apiHealth={apiHealth} />
       </section>
@@ -372,6 +454,10 @@ function formatDate(value: string): string {
 
 function formatProvider(provider: string): string {
   return provider.charAt(0) + provider.slice(1).toLowerCase();
+}
+
+function hasProvider(accounts: LinkedAccount[], provider: string): boolean {
+  return accounts.some((account) => account.provider === provider);
 }
 
 function getErrorMessage(error: unknown): string {
